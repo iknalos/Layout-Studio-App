@@ -573,9 +573,9 @@ RULES:
     try{
       const ctrl=new AbortController();abortRef.current=ctrl;
       const timer=setTimeout(()=>ctrl.abort(),20000);
-      const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+      const res=await fetch('/api/chat',{
         method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer GROQ_KEY_PLACEHOLDER'},
+        headers:{'Content-Type':'application/json'},
         signal:ctrl.signal,
         body:JSON.stringify({
           model:'llama-3.3-70b-versatile',

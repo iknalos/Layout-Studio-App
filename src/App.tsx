@@ -22,8 +22,6 @@ function LandingPage({onEnter}){
         .use-tag{background:rgba(255,255,255,.05);color:#8892a4;font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid #1e2d3d;display:inline-block;margin:3px}
         .step-num{width:56px;height:56px;border-radius:50%;background:#0f1825;border:2px solid #00d4aa;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#00d4aa;margin:0 auto 16px}
       `}</style>
-
-      {/* NAV */}
       <nav style={{position:'sticky',top:0,zIndex:100,background:'rgba(8,12,20,0.9)',backdropFilter:'blur(12px)',borderBottom:'1px solid #1e2d3d',padding:'0 5%',height:58,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <div style={{display:'flex',alignItems:'center',gap:10,fontWeight:700,fontSize:17}}>
           <div style={{width:30,height:30,background:'linear-gradient(135deg,#00d4aa,#0ea5e9)',borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>⬡</div>
@@ -34,8 +32,6 @@ function LandingPage({onEnter}){
         </div>
         <button className="btn-primary" style={{padding:'8px 18px',fontSize:13}} onClick={onEnter}>Open App →</button>
       </nav>
-
-      {/* HERO */}
       <section style={{minHeight:'92vh',display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'80px 5% 60px',position:'relative',overflow:'hidden'}}>
         <div className="hex-grid"/>
         <div style={{position:'absolute',width:500,height:500,background:'rgba(0,212,170,.1)',borderRadius:'50%',filter:'blur(80px)',top:-100,left:-100,pointerEvents:'none'}}/>
@@ -63,8 +59,6 @@ function LandingPage({onEnter}){
           </div>
         </div>
       </section>
-
-      {/* COMPARE BANNER */}
       <div style={{background:'#0d1220',borderTop:'1px solid #1e2d3d',borderBottom:'1px solid #1e2d3d',padding:'16px 5%',display:'flex',justifyContent:'center',alignItems:'center',gap:14,flexWrap:'wrap',fontSize:13,color:'#8892a4'}}>
         <span><span style={{color:'#ef4444',fontWeight:600}}>KLayout</span> — 200MB install required</span>
         <span style={{color:'#1e2d3d'}}>·</span>
@@ -72,8 +66,6 @@ function LandingPage({onEnter}){
         <span style={{color:'#1e2d3d'}}>·</span>
         <span><span style={{color:'#00d4aa',fontWeight:600}}>Layout Studio</span> — Free, instant, any browser</span>
       </div>
-
-      {/* FEATURES */}
       <section id="features" style={{padding:'80px 5%',background:'#080c14'}}>
         <div style={{textAlign:'center',marginBottom:48}}>
           <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Features</p>
@@ -100,8 +92,6 @@ function LandingPage({onEnter}){
           ))}
         </div>
       </section>
-
-      {/* FORMATS */}
       <section id="formats" style={{padding:'80px 5%',background:'#0d1220'}}>
         <div style={{textAlign:'center',marginBottom:48}}>
           <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>File Formats</p>
@@ -122,8 +112,6 @@ function LandingPage({onEnter}){
           ))}
         </div>
       </section>
-
-      {/* HOW IT WORKS */}
       <section id="how-it-works" style={{padding:'80px 5%',background:'#080c14'}}>
         <div style={{textAlign:'center',marginBottom:48}}>
           <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>How it works</p>
@@ -146,8 +134,6 @@ function LandingPage({onEnter}){
           ))}
         </div>
       </section>
-
-      {/* CTA */}
       <section style={{padding:'90px 5%',background:'#080c14',textAlign:'center'}}>
         <div style={{background:'linear-gradient(135deg,rgba(0,212,170,.07),rgba(14,165,233,.07))',border:'1px solid rgba(0,212,170,.2)',borderRadius:20,padding:'60px 40px',maxWidth:680,margin:'0 auto'}}>
           <h2 style={{fontSize:'clamp(22px,3vw,36px)',fontWeight:700,marginBottom:14,letterSpacing:'-.02em'}}>Start designing in 10 seconds</h2>
@@ -160,8 +146,6 @@ function LandingPage({onEnter}){
           </div>
         </div>
       </section>
-
-      {/* FOOTER */}
       <footer style={{background:'#0d1220',borderTop:'1px solid #1e2d3d',padding:'32px 5%',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:16,fontSize:13,color:'#8892a4'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,fontWeight:700,fontSize:15,color:'#f0f4ff'}}>
           <div style={{width:24,height:24,background:'linear-gradient(135deg,#00d4aa,#0ea5e9)',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13}}>⬡</div>
@@ -271,7 +255,38 @@ const readOU=(b,p)=>{let r=0,sh=0;for(;;){const v=b[p++];r|=(v&0x7F)<<sh;sh+=7;i
 const readOS=(b,p)=>{const[n,p2]=readOU(b,p);return[(n&1)?-(n>>1)-1:(n>>1),p2];};
 const readOStr=(b,p)=>{const[l,p2]=readOU(b,p);let s='';for(let i=0;i<l;i++)s+=String.fromCharCode(b[p2+i]);return[s,p2+l];};
 const readOReal=(b,p)=>{const t=b[p++];switch(t){case 0:return readOU(b,p);case 1:{const[n,q]=readOU(b,p);return[1/n,q];}case 2:{const[n,q]=readOU(b,p);return[-1/n,q];}case 3:{const[n,q]=readOU(b,p);const[d,q2]=readOU(b,q);return[n/d,q2];}case 4:{const[n,q]=readOU(b,p);const[d,q2]=readOU(b,q);return[-n/d,q2];}case 5:{const[n,q]=readOU(b,p);return[-n,q];}case 6:return[new DataView(b.buffer,b.byteOffset+p,4).getFloat32(0,true),p+4];case 7:return[new DataView(b.buffer,b.byteOffset+p,8).getFloat64(0,true),p+8];default:return[1,p];}};
-function readPtList(b,p){const[,p2]=readOU(b,p);const[count,p3]=readOU(b,p2);const dl=[];let pos=p3;for(let i=0;i<count;i++){const[v,np]=readOS(b,pos);pos=np;dl.push(i%2===0?[v,0]:[0,v]);}return[dl,pos];}
+
+// ── FIXED: g-delta point list reader (handles arbitrary deltas) ──────────
+function readGDelta(b,p){
+  const[v,p2]=readOU(b,p);
+  if(v&1){
+    // extended: dx encoded in v, dy follows as signed int
+    const dx=((v>>2)&0x3FFFFFFF)*(v&2?-1:1);
+    const[dy,p3]=readOS(b,p2);
+    return[[dx,dy],p3];
+  }
+  // compact octangular
+  const mag=v>>4,dir=(v>>1)&7;
+  const dirs=[[mag,0],[0,mag],[-mag,0],[0,-mag],[mag,mag],[-mag,mag],[-mag,-mag],[mag,-mag]];
+  return[dirs[dir]||[0,0],p2];
+}
+function readPtList(b,p){
+  const[type,p2]=readOU(b,p);
+  const[count,p3]=readOU(b,p2);
+  const dl=[];let pos=p3;
+  for(let i=0;i<count;i++){
+    if(type<=1){
+      // Manhattan alternating
+      const[v,np]=readOS(b,pos);pos=np;
+      dl.push(i%2===0?[v,0]:[0,v]);
+    } else {
+      // g-delta or 5-delta
+      const[delta,np]=readGDelta(b,pos);pos=np;
+      dl.push(delta);
+    }
+  }
+  return[dl,pos];
+}
 function readRep(b,p){const[type,p2]=readOU(b,p);if(type===1){const[xc,p3]=readOU(b,p2);const[yc,p4]=readOU(b,p3);const[xs,p5]=readOU(b,p4);const[ys,p6]=readOU(b,p5);return[{type:1,xCount:xc+2,yCount:yc+2,xStep:xs,yStep:ys},p6];}return[{type:0},p2];}
 const circPts=(cx,cy,r,n=128)=>{
   const p=[],seen=new Set();
@@ -338,9 +353,33 @@ const writeOU=v=>{v=Math.max(0,Math.round(v));const b=[];do{let x=v&0x7F;v>>>=7;
 const writeOS=v=>writeOU(v>=0?v*2:(-v)*2-1);
 const writeOStr=s=>cat(writeOU(s.length),new Uint8Array([...s].map(c=>c.charCodeAt(0))));
 const writeOReal=v=>{if(Number.isInteger(v)&&v>=0)return cat(new Uint8Array([0]),writeOU(v));const buf=new ArrayBuffer(8);new DataView(buf).setFloat64(0,v,true);return cat(new Uint8Array([7]),new Uint8Array(buf));};
-const writeGD=(dx,dy)=>{const adx=Math.abs(dx),ady=Math.abs(dy);if(adx===0||ady===0||adx===ady){const dir=ady===0?(dx>0?0:2):(adx===0?(dy>0?1:3):(dx>0?(dy>0?4:7):(dy>0?5:6)));return writeOU((Math.max(adx,ady)<<4)|(dir<<1));}return cat(writeOU(1),writeOS(dx),writeOS(dy));};
+
+// ── FIXED: g-delta writer — correct OASIS encoding for arbitrary deltas ──
+const writeGD=(dx,dy)=>{
+  const adx=Math.abs(dx),ady=Math.abs(dy);
+  if(ady===0){return writeOU((adx<<4)|((dx>=0?0:2)<<1));}
+  if(adx===0){return writeOU((ady<<4)|((dy>=0?1:3)<<1));}
+  if(adx===ady){const dir=dx>=0?(dy>=0?4:7):(dy>=0?5:6);return writeOU((adx<<4)|(dir<<1));}
+  // Arbitrary delta: extended g-delta form
+  // First uint: (abs(dx) << 2) | (sign_dx << 1) | 1
+  // Second sint: dy
+  const v1=(adx<<2)|((dx<0?1:0)<<1)|1;
+  return cat(writeOU(v1),writeOS(dy));
+};
 const writePtList=pts=>cat(writeOU(4),writeOU(pts.length),...pts.map(([dx,dy])=>writeGD(dx,dy)));
 const isRectO=pts=>{const n=pts.length;if(n!==4&&n!==5)return false;return true;};
+
+// ── FIXED: circle detection for OASIS native circle export ──
+const detectOASISCircle=xy=>{
+  if(xy.length<16)return null;
+  const gcx=xy.reduce((s,p)=>s+p[0],0)/xy.length;
+  const gcy=xy.reduce((s,p)=>s+p[1],0)/xy.length;
+  const radii=xy.map(p=>Math.hypot(p[0]-gcx,p[1]-gcy));
+  const avgR=radii.reduce((s,r)=>s+r,0)/radii.length;
+  const maxErr=radii.reduce((m,r)=>Math.max(m,Math.abs(r-avgR)),0);
+  return(avgR>0&&maxErr/avgR<0.05)?{cx:Math.round(gcx),cy:Math.round(gcy),r:Math.round(avgR)}:null;
+};
+
 function writeOASIS(lib){
   const dbUnit=lib.dbUnit||1e-9,upm=Math.round(1e-6/dbUnit);
   const mg='%SEMI-OASIS\r\n';
@@ -351,7 +390,20 @@ function writeOASIS(lib){
     parts.push(writeOU(13),writeOU(ci));
     for(const e of c.elements){
       if(e.type==='boundary'){
-        if(isRectO(e.xy)){
+        // ── Check for circle first → write as native OASIS circle (type 23) ──
+        const circ=detectOASISCircle(e.xy);
+        if(circ){
+          // info byte: 0x80=layer+dt, 0x20=radius, 0x10=x, 0x08=y
+          parts.push(
+            writeOU(23),
+            new Uint8Array([0x80|0x20|0x10|0x08]),
+            writeOU(e.layer),
+            writeOU(e.datatype||0),
+            writeOU(circ.r),
+            writeOS(circ.cx),
+            writeOS(circ.cy)
+          );
+        } else if(isRectO(e.xy)){
           let x0=1e15,x1=-1e15,y0=1e15,y1=-1e15;
           for(const p of e.xy){if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}
           const w=x1-x0,h=y1-y0,sq=w===h;
@@ -450,18 +502,11 @@ function drawCell(ctx,cell,map,lc,lv,tr,W,H,depth,lib){
           const radii=e.xy.map(p=>Math.hypot(p[0]-gcx,p[1]-gcy));
           const avgR=radii.reduce((s,r)=>s+r,0)/radii.length;
           const maxErr=radii.reduce((m,r)=>Math.max(m,Math.abs(r-avgR)),0);
-          if(avgR>0&&maxErr/avgR<0.12){
-            isCircular=true;
-            pcx=tx+gcx*s;pcy=ty-gcy*s;prad=avgR*s;
-          }
+          if(avgR>0&&maxErr/avgR<0.12){isCircular=true;pcx=tx+gcx*s;pcy=ty-gcy*s;prad=avgR*s;}
         }
         ctx.beginPath();
-        if(isCircular){
-          ctx.arc(pcx,pcy,prad,0,Math.PI*2);
-        } else {
-          for(let i=0;i<e.xy.length;i++){const p=e.xy[i];i?ctx.lineTo(tx+p[0]*s,ty-p[1]*s):ctx.moveTo(tx+p[0]*s,ty-p[1]*s);}
-          ctx.closePath();
-        }
+        if(isCircular){ctx.arc(pcx,pcy,prad,0,Math.PI*2);}
+        else{for(let i=0;i<e.xy.length;i++){const p=e.xy[i];i?ctx.lineTo(tx+p[0]*s,ty-p[1]*s):ctx.moveTo(tx+p[0]*s,ty-p[1]*s);}ctx.closePath();}
         ctx.fillStyle=hexA(col,0.25);ctx.strokeStyle=col;ctx.lineWidth=Math.max(0.5,s*0.0005);ctx.fill();ctx.stroke();
       } else if(e.type==='path'&&e.xy.length>1){
         ctx.beginPath();for(let i=0;i<e.xy.length;i++){const p=e.xy[i];i?ctx.lineTo(tx+p[0]*s,ty-p[1]*s):ctx.moveTo(tx+p[0]*s,ty-p[1]*s);}
@@ -472,7 +517,7 @@ function drawCell(ctx,cell,map,lc,lv,tr,W,H,depth,lib){
         const rc=map[e.sname];if(!rc)continue;
         const ex=typeof e.xy[0]==='number'?e.xy[0]:e.xy[0][0],ey=typeof e.xy[0]==='number'?e.xy[1]:e.xy[0][1];
         const sc=s*(e.mag||1);const bb=cachedBBox(rc,map,lib);
-        if(bb){const bw=Math.abs(bb.x1-bb.x0)*sc,bh=Math.abs(bb.y1-bb.y0)*sc;if(bw<1&&bh<1){const rx0=tx+(ex+bb.x0)*sc,rx1=tx+(ex+bb.x1)*sc,ry0=ty-(ey+bb.y1)*sc,ry1=ty-(ey+bb.y0)*sc;if(rx1>-10&&rx0<W+10&&ry1>-10&&ry0<H+10){ctx.fillStyle='rgba(0,0,0,0.12)';ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.fillRect(rx0,ry0,rx1-rx0,ry1-ry0);ctx.strokeRect(rx0,ry0,rx1-rx0,ry1-ry0);}continue;}}
+        if(bb){const bw=Math.abs(bb.x1-bb.x0)*sc,bh=Math.abs(bb.y1-bb.y0)*sc;if(bw<1&&bh<1){const rx0=tx+(ex+bb.x0)*sc,rx1=tx+(ex+bb.x1)*sc,ry0=ty-(ey+bb.y1)*sc,ry1=ty-(ey+bb.y0)*sc;if(rx1>-10&&rx0<W+10&&ry1>-10&&ry0<H+10){ctx.fillStyle='rgba(0,0,0,0.08)';ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=1;ctx.fillRect(rx0,ry0,rx1-rx0,ry1-ry0);ctx.strokeRect(rx0,ry0,rx1-rx0,ry1-ry0);}continue;}}
         drawCell(ctx,rc,map,lc,lv,{x:tx+ex*s,y:ty-ey*s,s:sc},W,H,depth-1,lib);
       } else if(e.type==='aref'&&e.xy.length>=3){
         const rc=map[e.sname];if(!rc)continue;
@@ -481,7 +526,7 @@ function drawCell(ctx,cell,map,lc,lv,tr,W,H,depth,lib){
         const sc=s*(e.mag||1);const bb=cachedBBox(rc,map,lib);
         const bx0=bb?bb.x0:0,bx1=bb?bb.x1:0,by0=bb?bb.y0:0,by1=bb?bb.y1:0;
         const bw=(bx1-bx0)*sc,bh=(by1-by0)*sc,ccx=(bx0+bx1)/2,ccy=(by0+by1)/2;
-        if(bw<1&&bh<1){const cx=[ox,ox+(nc-1)*csx+(nr-1)*rsx],cy2=[oy,oy+(nc-1)*csy+(nr-1)*rsy];const ax0=Math.min(...cx)+bx0,ax1=Math.max(...cx)+bx1,ay0=Math.min(...cy2)+by0,ay1=Math.max(...cy2)+by1;const rx0=tx+ax0*sc,rx1=tx+ax1*sc,ry0=ty-ay1*sc,ry1=ty-ay0*sc;if(rx1>-10&&rx0<W+10&&ry1>-10&&ry0<H+10){ctx.fillStyle='rgba(0,0,0,0.12)';ctx.strokeStyle='rgba(0,0,0,0.5)';ctx.lineWidth=1;ctx.fillRect(rx0,ry0,rx1-rx0,ry1-ry0);ctx.strokeRect(rx0,ry0,rx1-rx0,ry1-ry0);}continue;}
+        if(bw<1&&bh<1){const cx=[ox,ox+(nc-1)*csx+(nr-1)*rsx],cy2=[oy,oy+(nc-1)*csy+(nr-1)*rsy];const ax0=Math.min(...cx)+bx0,ax1=Math.max(...cx)+bx1,ay0=Math.min(...cy2)+by0,ay1=Math.max(...cy2)+by1;const rx0=tx+ax0*sc,rx1=tx+ax1*sc,ry0=ty-ay1*sc,ry1=ty-ay0*sc;if(rx1>-10&&rx0<W+10&&ry1>-10&&ry0<H+10){ctx.fillStyle='rgba(0,0,0,0.08)';ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=1;ctx.fillRect(rx0,ry0,rx1-rx0,ry1-ry0);ctx.strokeRect(rx0,ry0,rx1-rx0,ry1-ry0);}continue;}
         let c0=0,c1=nc-1,r0=0,r1=nr-1;
         const axial=Math.abs(csy)<0.5&&Math.abs(rsx)<0.5&&Math.abs(csx)>0&&Math.abs(rsy)>0;
         if(axial){const gx0=(-10-tx)/sc,gx1=(W+10-tx)/sc,gy0=(ty-(H+10))/sc,gy1=(ty+10)/sc;const vr=(o,p,bMin,bMax,n,g0,g1)=>{let a,b;if(p>0){a=Math.max(0,Math.ceil((g0-o-bMax)/p));b=Math.min(n-1,Math.floor((g1-o-bMin)/p));}else{a=Math.max(0,Math.ceil((g1-o-bMin)/p));b=Math.min(n-1,Math.floor((g0-o-bMax)/p));}return[a,b];};[c0,c1]=vr(ox,csx,bx0,bx1,nc,gx0,gx1);[r0,r1]=vr(oy,rsy,by0,by1,nr,gy0,gy1);if(c0>c1||r0>r1)continue;}
@@ -580,17 +625,55 @@ function GDSStudio(){
   useEffect(()=>{if(pending&&lib){const c=lib.cellMap[pending];if(c){setSelCell(c);setPending(null);setTimeout(fitView,80);}}},[pending,lib]);
   useEffect(()=>{const el=contRef.current;if(!el)return;const obs=new ResizeObserver(([en])=>{const{width:w,height:h}=en.contentRect;const cv=cvRef.current;if(cv){cv.width=Math.floor(w);cv.height=Math.floor(h);}setCsize({w:Math.floor(w),h:Math.floor(h)});});obs.observe(el);return()=>obs.disconnect();},[]);
 
+  // ── CANVAS RENDER — improved grid ──────────────────────
   useEffect(()=>{
     const cv=cvRef.current;if(!cv||cv.width===0)return;
     const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
     ctx.clearRect(0,0,W,H);
-    if(polarInvert){ctx.fillStyle='#111';ctx.fillRect(0,0,W,H);}else{ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);}
+
+    // ── Background: light gray instead of pure white ──
+    if(polarInvert){ctx.fillStyle='#111';ctx.fillRect(0,0,W,H);}
+    else{ctx.fillStyle='#f2f4f7';ctx.fillRect(0,0,W,H);}
+
+    // ── Grid: minor + major lines (KLayout-style) ──
     const gs=50*tr.s;
-    if(gs>6&&!polarInvert){ctx.strokeStyle='#e8e8e8';ctx.lineWidth=0.5;for(let x=((tr.x%gs)+gs)%gs;x<W;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}for(let y=((tr.y%gs)+gs)%gs;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}}
+    if(!polarInvert){
+      // Minor grid lines
+      if(gs>5){
+        ctx.strokeStyle='#dde3ec';ctx.lineWidth=0.5;
+        for(let x=((tr.x%gs)+gs)%gs;x<W;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+        for(let y=((tr.y%gs)+gs)%gs;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      }
+      // Major grid lines (every 5 minor)
+      const mgs=gs*5;
+      if(mgs>10){
+        ctx.strokeStyle='#b8c4d4';ctx.lineWidth=1;
+        for(let x=((tr.x%mgs)+mgs)%mgs;x<W;x+=mgs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+        for(let y=((tr.y%mgs)+mgs)%mgs;y<H;y+=mgs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      }
+    } else {
+      // Dark mode minor grid
+      if(gs>5){
+        ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.lineWidth=0.5;
+        for(let x=((tr.x%gs)+gs)%gs;x<W;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+        for(let y=((tr.y%gs)+gs)%gs;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      }
+      const mgs=gs*5;
+      if(mgs>10){
+        ctx.strokeStyle='rgba(255,255,255,0.1)';ctx.lineWidth=1;
+        for(let x=((tr.x%mgs)+mgs)%mgs;x<W;x+=mgs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+        for(let y=((tr.y%mgs)+mgs)%mgs;y<H;y+=mgs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      }
+    }
+
+    // Snap dots
     if(snapOn&&gridSize>0){const gsd=gridSize*tr.s;if(gsd>8){ctx.fillStyle=polarInvert?'rgba(255,255,255,0.2)':'rgba(0,100,200,0.3)';const sx=((tr.x%gsd)+gsd)%gsd,sy=((tr.y%gsd)+gsd)%gsd;for(let x=sx;x<W;x+=gsd)for(let y=sy;y<H;y+=gsd)ctx.fillRect(x-1.5,y-1.5,3,3);}}
+
     const cell=selCell||(lib&&lib.cells.length?lib.cells[lib.cells.length-1]:null);
     if(cell&&lib){if(polarInvert){ctx.save();ctx.globalCompositeOperation='screen';}drawCell(ctx,cell,lib.cellMap,lc,lv,tr,W,H,12,lib);if(polarInvert)ctx.restore();}
+
     if(selEl&&selEl.bb){const bb=selEl.bb;const sx0=tr.x+bb.x0*tr.s-5,sy0=tr.y-bb.y1*tr.s-5,sw=(bb.x1-bb.x0)*tr.s+10,sh=(bb.y1-bb.y0)*tr.s+10;ctx.strokeStyle='#0066ff';ctx.lineWidth=1.5;ctx.setLineDash([6,3]);ctx.strokeRect(sx0,sy0,sw,sh);ctx.setLineDash([]);if(lib){const nmU=lib.dbUnit*1e9;ctx.fillStyle='#0066ff';ctx.font='bold 10px monospace';ctx.fillText(`${fmtNm((bb.x1-bb.x0)*nmU)} × ${fmtNm((bb.y1-bb.y0)*nmU)}`,sx0+2,sy0-4);}}
+
     const dCol=lCol(lc,activeLayer);
     if(drawStartRef.current&&(drawMode==='rect'||drawMode==='circle')){
       const[s0x,s0y]=drawStartRef.current;const dc=drawCur||[s0x,s0y];
@@ -609,8 +692,19 @@ function GDSStudio(){
     if(waferOn&&lib){const waferR=(waferDia*1e6)/(lib.dbUnit*1e9);const[wcx,wcy]=g2c(0,0,tr);const wr=waferR*tr.s;ctx.strokeStyle='rgba(220,50,50,0.5)';ctx.lineWidth=2;ctx.setLineDash([12,6]);ctx.beginPath();ctx.arc(wcx,wcy,wr,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='rgba(220,50,50,0.7)';ctx.font='11px monospace';ctx.fillText(`⌀ ${waferDia}mm`,wcx-20,wcy-wr-5);}
     if(sels.length>0&&lib){const nmU=lib.dbUnit*1e9;const SC=['#0066ff','#ff6600'];sels.forEach((s,i)=>{if(!s?.wc)return;const scx=tr.x+s.wc[0]*tr.s,scy=tr.y-s.wc[1]*tr.s,r=Math.max((s.diam||0)/2*tr.s,4);if(!Number.isFinite(scx+scy+r))return;ctx.beginPath();ctx.arc(scx,scy,r+3,0,Math.PI*2);ctx.strokeStyle=SC[i];ctx.lineWidth=2;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=SC[i];ctx.font='bold 11px monospace';ctx.fillText(`${i+1}`,scx+r+5,scy-3);});if(sels.length===2&&sels[0].wc&&sels[1].wc){const ax=tr.x+sels[0].wc[0]*tr.s,ay=tr.y-sels[0].wc[1]*tr.s,bx=tr.x+sels[1].wc[0]*tr.s,by=tr.y-sels[1].wc[1]*tr.s;if(Number.isFinite(ax+ay+bx+by)){ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.strokeStyle='#333';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);const p=Math.hypot(sels[1].wc[0]-sels[0].wc[0],sels[1].wc[1]-sels[0].wc[1])*nmU;ctx.fillStyle='#000';ctx.font='bold 11px monospace';ctx.fillText(`⟷ ${fmtNm(p)}`,(ax+bx)/2+6,(ay+by)/2-5);}}}
     rulers.forEach(r=>{const[ax,ay]=g2c(r.p1[0],r.p1[1],tr),cb=g2c(r.p2[0],r.p2[1],tr);ctx.strokeStyle='#9932cc';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(...cb);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#9932cc';ctx.font='bold 10px monospace';ctx.fillText(r.label,(ax+cb[0])/2+3,(ay+cb[1])/2-4);});
-    if(lib){const nmPx=tr.s/(lib.dbUnit*1e9);const targetPx=120;const nmRaw=targetPx/nmPx;const mag10=Math.pow(10,Math.floor(Math.log10(nmRaw)));const norm=nmRaw/mag10;const niceNm=norm<1.5?mag10:norm<3.5?2*mag10:norm<7.5?5*mag10:10*mag10;const barPx=niceNm*nmPx;const label=niceNm>=1e6?`${niceNm/1e6}mm`:niceNm>=1000?`${niceNm/1000}μm`:`${niceNm}nm`;const bx=16,by=H-16;ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fillRect(bx-4,by-22,barPx+8,26);ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+barPx,by);ctx.moveTo(bx,by-6);ctx.lineTo(bx,by+1);ctx.moveTo(bx+barPx,by-6);ctx.lineTo(bx+barPx,by+1);ctx.stroke();ctx.fillStyle='#333';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText(label,bx+barPx/2,by-9);ctx.textAlign='left';}
-    const[ocx,ocy]=g2c(0,0,tr);if(ocx>0&&ocx<W&&ocy>0&&ocy<H){ctx.strokeStyle='rgba(100,100,200,0.4)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(ocx,0);ctx.lineTo(ocx,H);ctx.stroke();ctx.beginPath();ctx.moveTo(0,ocy);ctx.lineTo(W,ocy);ctx.stroke();ctx.setLineDash([]);}
+
+    // Scale bar
+    if(lib){const nmPx=tr.s/(lib.dbUnit*1e9);const targetPx=120;const nmRaw=targetPx/nmPx;const mag10=Math.pow(10,Math.floor(Math.log10(nmRaw)));const norm=nmRaw/mag10;const niceNm=norm<1.5?mag10:norm<3.5?2*mag10:norm<7.5?5*mag10:10*mag10;const barPx=niceNm*nmPx;const label=niceNm>=1e6?`${niceNm/1e6}mm`:niceNm>=1000?`${niceNm/1000}μm`:`${niceNm}nm`;const bx=16,by=H-16;ctx.fillStyle='rgba(255,255,255,0.9)';ctx.fillRect(bx-4,by-22,barPx+8,26);ctx.strokeStyle='#444';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+barPx,by);ctx.moveTo(bx,by-6);ctx.lineTo(bx,by+1);ctx.moveTo(bx+barPx,by-6);ctx.lineTo(bx+barPx,by+1);ctx.stroke();ctx.fillStyle='#444';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText(label,bx+barPx/2,by-9);ctx.textAlign='left';}
+
+    // Origin crosshair
+    const[ocx,ocy]=g2c(0,0,tr);
+    if(ocx>0&&ocx<W&&ocy>0&&ocy<H){
+      ctx.strokeStyle=polarInvert?'rgba(255,255,255,0.3)':'rgba(80,100,180,0.5)';
+      ctx.lineWidth=1;ctx.setLineDash([4,4]);
+      ctx.beginPath();ctx.moveTo(ocx,0);ctx.lineTo(ocx,H);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(0,ocy);ctx.lineTo(W,ocy);ctx.stroke();
+      ctx.setLineDash([]);
+    }
   },[lib,selCell,lc,lv,tr,csize,sels,selEl,drawMode,drawPts,drawCur,activeLayer,snapOn,gridSize,waferOn,waferDia,polarInvert,rulers]);
 
   useEffect(()=>{const cv=cvRef.current;if(!cv)return;const h=e=>{e.preventDefault();const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;const delta=e.deltaY;const f=Math.pow(1.001,Math.abs(delta))*(delta<0?1:-1);const zoom=Math.exp(f*Math.log(1.2)/3);setTr(t=>({s:t.s*zoom,x:mx+(t.x-mx)*zoom,y:my+(t.y-my)*zoom}));};cv.addEventListener('wheel',h,{passive:false});return()=>cv.removeEventListener('wheel',h);},[csize]);
@@ -717,37 +811,24 @@ ELEMENT TYPES — use exactly these formats:
 CIRCLE: {"type":"circle","cx":0,"cy":0,"r":RADIUS,"layer":0}
 - NEVER compute polygon points for circles. Always use type "circle" with cx,cy,r.
 - r is radius in database units (1 unit = 1nm, so 1μm = 1000 units)
-- Example 50nm diameter circle: {"type":"circle","cx":0,"cy":0,"r":25,"layer":0}
-- Example 5μm radius circle: {"type":"circle","cx":0,"cy":0,"r":5000,"layer":0}
 
 RECTANGLE: {"type":"boundary","layer":0,"datatype":0,"xy":[[x,y],[x+W,y],[x+W,y+H],[x,y+H]]}
-- W and H in database units (1nm = 1 unit)
 
 PATH/LINE: {"type":"path","layer":0,"datatype":0,"width":W,"xy":[[x1,y1],[x2,y2],...]}
 
-ARRAY (repeat a cell): {"type":"aref","sname":"CELLNAME","colrow":[NC,NR],"xy":[[ox,oy],[ox+NC*xstep,oy],[ox,oy+NR*ystep]]}
+ARRAY: {"type":"aref","sname":"CELLNAME","colrow":[NC,NR],"xy":[[ox,oy],[ox+NC*xstep,oy],[ox,oy+NR*ystep]]}
 
 RULES:
 - Always place shapes near origin (0,0)
-- For questions only (no shapes): {"message":"your answer","operations":[]}
-- Output ONLY the JSON, nothing else, no markdown`;
+- For questions only: {"message":"your answer","operations":[]}
+- Output ONLY the JSON, nothing else`;
     try{
       const ctrl=new AbortController();abortRef.current=ctrl;
       const timer=setTimeout(()=>ctrl.abort(),20000);
       const res=await fetch('/api/chat',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        signal:ctrl.signal,
-        body:JSON.stringify({
-          model:'llama-3.3-70b-versatile',
-          max_tokens:2000,
-          temperature:0.1,
-          messages:[
-            {role:'system',content:sys},
-            ...msgs.slice(-8).map(m=>({role:m.role,content:m.content})),
-            {role:'user',content:msg}
-          ]
-        })
+        method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,
+        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:2000,temperature:0.1,
+          messages:[{role:'system',content:sys},...msgs.slice(-8).map(m=>({role:m.role,content:m.content})),{role:'user',content:msg}]})
       });
       clearTimeout(timer);
       const data=await res.json();
@@ -760,21 +841,13 @@ RULES:
       if(!parsed){const m2=text.match(/\{[\s\S]*\}/);if(m2)parsed=tryParse(m2[0]);}
       if(!parsed)parsed=tryParse(text.trim());
       if(!parsed){setMsgs(m=>[...m,{role:'assistant',content:text}]);setBusy(false);return;}
-      const safeXY=(e)=>{
-        const raw=e.xy||e.points||e.coordinates||[];
-        if(!Array.isArray(raw)||raw.length===0)return[];
-        if(!Array.isArray(raw[0])){const pairs=[];for(let i=0;i+1<raw.length;i+=2)pairs.push([Math.round(+raw[i]||0),Math.round(+raw[i+1]||0)]);return pairs;}
-        return raw.map(pt=>Array.isArray(pt)?[Math.round(+pt[0]||0),Math.round(+pt[1]||0)]:[0,0]);
-      };
-      const processEl=(e)=>{
-        if(!e||!e.type)return null;
-        try{
-          if(e.type==='aref')return{type:'aref',sname:e.sname||'',colrow:e.colrow||[1,1],mag:e.mag||1,xy:(e.xy||[]).map(pt=>Array.isArray(pt)?[Math.round(+pt[0]||0),Math.round(+pt[1]||0)]:[0,0])};
-          if(e.type==='sref'){const xy=Array.isArray(e.xy?.[0])?e.xy[0]:(e.xy||[0,0]);return{type:'sref',sname:e.sname||'',mag:e.mag||1,xy:[Math.round(+xy[0]||0),Math.round(+xy[1]||0)]};}
-          if(e.type==='circle'){const cx=+e.cx||+e.x||0,cy=+e.cy||+e.y||0,r=+e.r||+e.radius||1000;return{type:'boundary',layer:+e.layer||0,datatype:0,xy:circPts(cx,cy,r)};}
-          return{type:e.type||'boundary',layer:+e.layer||0,datatype:+e.datatype||0,width:+e.width||0,xy:safeXY(e)};
-        }catch(_e){return null;}
-      };
+      const safeXY=(e)=>{const raw=e.xy||e.points||e.coordinates||[];if(!Array.isArray(raw)||raw.length===0)return[];if(!Array.isArray(raw[0])){const pairs=[];for(let i=0;i+1<raw.length;i+=2)pairs.push([Math.round(+raw[i]||0),Math.round(+raw[i+1]||0)]);return pairs;}return raw.map(pt=>Array.isArray(pt)?[Math.round(+pt[0]||0),Math.round(+pt[1]||0)]:[0,0]);};
+      const processEl=(e)=>{if(!e||!e.type)return null;try{
+        if(e.type==='aref')return{type:'aref',sname:e.sname||'',colrow:e.colrow||[1,1],mag:e.mag||1,xy:(e.xy||[]).map(pt=>Array.isArray(pt)?[Math.round(+pt[0]||0),Math.round(+pt[1]||0)]:[0,0])};
+        if(e.type==='sref'){const xy=Array.isArray(e.xy?.[0])?e.xy[0]:(e.xy||[0,0]);return{type:'sref',sname:e.sname||'',mag:e.mag||1,xy:[Math.round(+xy[0]||0),Math.round(+xy[1]||0)]};}
+        if(e.type==='circle'){const cx=+e.cx||+e.x||0,cy=+e.cy||+e.y||0,r=+e.r||+e.radius||1000;return{type:'boundary',layer:+e.layer||0,datatype:0,xy:circPts(cx,cy,r)};}
+        return{type:e.type||'boundary',layer:+e.layer||0,datatype:+e.datatype||0,width:+e.width||0,xy:safeXY(e)};
+      }catch(_e){return null;}};
       if(parsed.operations&&parsed.operations.length){
         const cl=libRef.current||{name:'gds_studio',userUnit:1e-3,dbUnit:1e-9,cells:[],cellMap:{}};
         let newCells=[...cl.cells];let newName=null;
@@ -796,18 +869,14 @@ RULES:
   const mP=mS0&&mS1&&mS0.wc&&mS1.wc?fmtNm(Math.hypot(mS1.wc[0]-mS0.wc[0],mS1.wc[1]-mS0.wc[1])*nmU):null;
   const selElem=selEl&&getActiveCell()?.elements[selEl.elIdx];
   const selBb=selEl?.bb;
-
-  // ── UPDATED: bigger tool buttons
   const toolBtn=(mode,icon,tip)=>(<button title={tip} onClick={()=>{setDrawMode(mode);if(mode!=='polygon'&&mode!=='path')setDrawPts([]);drawStartRef.current=null;}} style={{width:38,height:38,display:'flex',alignItems:'center',justifyContent:'center',background:drawMode===mode?'#e0e8ff':'transparent',border:drawMode===mode?'1px solid #88a':'1px solid #eee',borderRadius:7,cursor:'pointer',fontSize:17,color:drawMode===mode?'#226':'#666',margin:'1px 0'}}>{icon}</button>);
 
   return(
-    <div style={{display:'flex',flexDirection:'column',height:'100vh',background:'#f0f0f0',color:'#222',fontFamily:'monospace,sans-serif',fontSize:12}}>
+    <div style={{display:'flex',flexDirection:'column',height:'100vh',background:'#e8eaed',color:'#222',fontFamily:'monospace,sans-serif',fontSize:12}}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}button:active{transform:scale(0.96)}`}</style>
-
-      {/* ── TOOLBAR (bigger padding + title) ── */}
       <div style={{display:'flex',alignItems:'center',gap:5,padding:'8px 14px',background:'#fff',borderBottom:'1px solid #ddd',flexShrink:0,flexWrap:'wrap',minHeight:48}}>
         <span style={{fontWeight:'bold',color:'#226',marginRight:6,fontSize:14}}>⬡ GDS Studio</span>
-        <button style={{...tb(),fontSize:11,padding:'2px 8px'}} onClick={()=>window.location.href='/'} title="Back to home">← Home</button>
+        <button style={{...tb(),fontSize:11,padding:'2px 8px'}} onClick={()=>window.location.href='/'}>← Home</button>
         <button style={tb()} onClick={()=>fileRef.current&&fileRef.current.click()} disabled={loading}>📂 Open</button>
         <button style={tb(!!lib)} onClick={exportGDS} disabled={!lib||loading}>⬇ GDS</button>
         <button style={tb(!!lib)} onClick={exportOAS} disabled={!lib}>⬇ OAS</button>
@@ -833,12 +902,11 @@ RULES:
         <button style={{...tb(true,tab==='contact'),background:tab==='contact'?'#e0e8ff':'#226',color:tab==='contact'?'#226':'#fff',border:'1px solid #226'}} onClick={()=>setTab('contact')}>💬 Contact</button>
         <div style={{flex:1}}/>
         {cursor&&<span style={{color:'#aaa',fontSize:11}}>{cursor.x},{cursor.y} nm</span>}
+        {lib&&<span style={{color:'#999',fontSize:10,marginLeft:4}}>{(tr.s/(lib.dbUnit*1e9)).toFixed(1)} px/nm</span>}
         {!loading&&<span style={{color:'#888',fontSize:11,maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{status}</span>}
         {loading&&<span style={{color:'#a60',fontSize:12,display:'flex',gap:3,alignItems:'center'}}><span style={{display:'inline-block',animation:'spin 1s linear infinite'}}>⟳</span>{status}</span>}
         <input ref={fileRef} type="file" accept=".gds,.gds2,.oas,.oasis" style={{display:'none'}} onChange={e=>loadFile(e.target.files[0])}/>
       </div>
-
-      {/* DRC PANEL */}
       {showDrcPanel&&<div style={{background:'#fffbf0',borderBottom:'1px solid #e8d',padding:'6px 12px',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',fontSize:12}}>
         <span style={{fontWeight:'bold',color:'#664'}}>DRC</span>
         <label>Min spacing (nm):<input type="number" value={drcMinSp} onChange={e=>setDrcMinSp(+e.target.value)} style={{width:60,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
@@ -850,11 +918,7 @@ RULES:
         <label>To L:<input type="number" value={mergeTo} onChange={e=>setMergeTo(+e.target.value)} style={{width:36,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
         <button onClick={mergeLayersOp} style={tb(true)}>Merge</button>
       </div>}
-
-      {/* MAIN */}
       <div style={{flex:1,display:'flex',overflow:'hidden'}}>
-
-        {/* ── TOOL COLUMN (wider + bigger buttons) ── */}
         <div style={{width:46,background:'#fafafa',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',alignItems:'center',padding:'8px 4px',gap:4,flexShrink:0}}>
           {toolBtn('select','↖','Select (S)')}
           {toolBtn('rect','□','Rectangle (R)')}
@@ -863,8 +927,6 @@ RULES:
           {toolBtn('path','✏','Path (P)')}
           {toolBtn('measure','◎','Measure (M)')}
         </div>
-
-        {/* ── SIDEBAR (wider + bigger tabs) ── */}
         <div style={{width:270,background:'#fff',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',flexShrink:0}}>
           <div style={{display:'flex',borderBottom:'1px solid #ddd'}}>
             {[['ai','🤖'],['layers','≡'],['cells','⊞'],['props','◈'],['contact','✉']].map(([k,l])=>(
@@ -872,8 +934,6 @@ RULES:
             ))}
           </div>
           <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column'}}>
-
-            {/* AI TAB */}
             {tab==='ai'&&<>
               <div style={{flex:1,overflowY:'auto',padding:8,display:'flex',flexDirection:'column',gap:5,minHeight:0}}>
                 {msgs.map((m,i)=><div key={i} style={{padding:'6px 8px',borderRadius:6,fontSize:11,maxWidth:'95%',lineHeight:1.55,background:m.role==='user'?'#e0e8ff':'#f0f8f0',color:m.role==='user'?'#226':'#040',alignSelf:m.role==='user'?'flex-end':'flex-start',whiteSpace:'pre-wrap',border:'1px solid '+(m.role==='user'?'#aac':'#aca')}}>{m.content}</div>)}
@@ -889,8 +949,6 @@ RULES:
                 {busy?<button onClick={()=>{abortRef.current&&abortRef.current.abort();setBusy(false);}} style={tb(true,false,true)}>✕</button>:<button onClick={sendMsg} style={tb(true)}>➤</button>}
               </div>
             </>}
-
-            {/* LAYERS TAB */}
             {tab==='layers'&&<div style={{padding:8}}>
               {allLayers.length===0&&<div style={{color:'#aaa',textAlign:'center',marginTop:16,fontSize:12}}>No layers loaded</div>}
               {allLayers.map(l=><div key={l} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 6px',background:'#f8f8f8',borderRadius:5,border:'1px solid #eee'}}>
@@ -899,8 +957,6 @@ RULES:
                 <input type="checkbox" checked={lv[l]!==false} onChange={e=>setLv(p=>({...p,[l]:e.target.checked}))}/>
               </div>)}
             </div>}
-
-            {/* CELLS TAB */}
             {tab==='cells'&&<div style={{padding:6}}>
               {!lib&&<div style={{color:'#aaa',textAlign:'center',marginTop:16,fontSize:12}}>No file loaded</div>}
               {lib&&lib.cells.map(c=><div key={c.name} onClick={()=>{const ns=selCell&&selCell.name===c.name?null:c;setSelCell(ns);selRef.current=ns;setSelEl(null);}} style={{padding:'5px 7px',marginBottom:3,borderRadius:5,cursor:'pointer',background:selCell&&selCell.name===c.name?'#e0e8ff':'#f8f8f8',border:`1px solid ${selCell&&selCell.name===c.name?'#aac':'#eee'}`}}>
@@ -908,8 +964,6 @@ RULES:
                 <div style={{color:'#aaa',fontSize:10}}>{c.elements.length} elements</div>
               </div>)}
             </div>}
-
-            {/* PROPS TAB */}
             {tab==='props'&&<div style={{padding:8}}>
               {!selElem&&<div style={{color:'#aaa',fontSize:12,textAlign:'center',marginTop:20}}>↖ Click an element<br/>to inspect it</div>}
               {selElem&&<>
@@ -941,40 +995,27 @@ RULES:
                 </div>)}
               </div>}
             </div>}
-
-            {/* CONTACT TAB */}
             {tab==='contact'&&<div style={{padding:12,display:'flex',flexDirection:'column',gap:9}}>
               <div style={{fontSize:13,fontWeight:'bold',color:'#226'}}>💬 Suggestions & Contact</div>
-              <div style={{fontSize:11,color:'#888',lineHeight:1.6}}>Have a feature request, bug report, or just want to say hi? Drop a message!</div>
-              <div>
-                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Your name</div>
-                <input type="text" placeholder="Your name" value={cForm.name} onChange={e=>setCForm(f=>({...f,name:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
-              </div>
-              <div>
-                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Email address</div>
-                <input type="email" placeholder="you@example.com" value={cForm.email} onChange={e=>setCForm(f=>({...f,email:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
-              </div>
-              <div>
-                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Message / suggestion</div>
-                <textarea placeholder="Tell me what you'd like to see, or report a bug…" value={cForm.msg} onChange={e=>setCForm(f=>({...f,msg:e.target.value}))} rows={5} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
-              </div>
+              <div style={{fontSize:11,color:'#888',lineHeight:1.6}}>Have a feature request, bug report, or just want to say hi?</div>
+              <div><div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Your name</div><input type="text" placeholder="Your name" value={cForm.name} onChange={e=>setCForm(f=>({...f,name:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/></div>
+              <div><div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Email address</div><input type="email" placeholder="you@example.com" value={cForm.email} onChange={e=>setCForm(f=>({...f,email:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/></div>
+              <div><div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Message / suggestion</div><textarea placeholder="Feature request or bug…" value={cForm.msg} onChange={e=>setCForm(f=>({...f,msg:e.target.value}))} rows={5} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',resize:'vertical',outline:'none',boxSizing:'border-box'}}/></div>
               {cStatus&&<div style={{fontSize:11,padding:'6px 9px',borderRadius:5,background:cStatus.startsWith('✅')?'#f0fff0':cStatus.startsWith('⚠')?'#fff0f0':'#f0f4ff',color:cStatus.startsWith('✅')?'#060':cStatus.startsWith('⚠')?'#a00':'#226'}}>{cStatus}</div>}
               <button onClick={submitContact} style={{padding:'8px 0',background:'#226',border:'none',borderRadius:5,color:'#fff',fontSize:12,cursor:'pointer',fontWeight:'bold'}}>Send message →</button>
             </div>}
           </div>
         </div>
-
-        {/* CANVAS */}
         <div ref={contRef} style={{flex:1,position:'relative',overflow:'hidden'}} onDragOver={e=>{e.preventDefault();setOver(true);}} onDragLeave={()=>setOver(false)} onDrop={e=>{e.preventDefault();setOver(false);const f=e.dataTransfer.files[0];if(f)loadFile(f);}}>
           <canvas ref={cvRef} style={{position:'absolute',top:0,left:0,cursor:drawMode==='select'?'default':'crosshair'}}
             onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
             onContextMenu={e=>{e.preventDefault();setPanning(true);setLastXY({x:e.clientX,y:e.clientY});}}
             onMouseLeave={()=>{setPanning(false);setCursor(null);movingRef.current=null;}}/>
           {over&&<div style={{position:'absolute',inset:0,background:'rgba(0,100,255,0.08)',border:'3px dashed #88f',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',zIndex:10}}><div style={{textAlign:'center',color:'#66a',fontSize:18,fontWeight:'bold'}}><div style={{fontSize:48}}>📂</div>Drop .gds or .oas to open</div></div>}
-          {!lib&&!over&&<div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',color:'#ccc',pointerEvents:'none',userSelect:'none'}}>
+          {!lib&&!over&&<div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',color:'#bbb',pointerEvents:'none',userSelect:'none'}}>
             <div style={{fontSize:56}}>⬡</div>
-            <div style={{fontSize:16,fontWeight:'bold',color:'#bbb',margin:'8px 0'}}>GDS Studio v2</div>
-            <div style={{fontSize:11,color:'#ccc',lineHeight:1.8}}>Drop a .gds or .oas file here<br/>or use 🤖 AI to create shapes<br/><br/><span style={{fontSize:9}}>S=select · R=rect · C=circle · G=polygon · P=path · M=measure<br/>Ctrl+Z undo · Del delete · Arrow keys nudge</span></div>
+            <div style={{fontSize:16,fontWeight:'bold',color:'#aaa',margin:'8px 0'}}>GDS Studio v2</div>
+            <div style={{fontSize:11,color:'#bbb',lineHeight:1.8}}>Drop a .gds or .oas file here<br/>or use 🤖 AI to create shapes<br/><br/><span style={{fontSize:9}}>S=select · R=rect · C=circle · G=polygon · P=path · M=measure<br/>Ctrl+Z undo · Del delete · Arrow keys nudge</span></div>
           </div>}
           {drawMode==='measure'&&<div style={{position:'absolute',bottom:10,left:'50%',transform:'translateX(-50%)',background:'#ffffffee',border:'1px solid #ddd',borderRadius:6,padding:'5px 14px',display:'flex',gap:12,alignItems:'center',fontSize:11,pointerEvents:'none',whiteSpace:'nowrap',zIndex:5}}>
             {!mD0&&<span style={{color:'#aaa'}}>◎ Click a circle to measure</span>}

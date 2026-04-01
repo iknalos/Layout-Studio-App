@@ -180,7 +180,18 @@ function LandingPage({onEnter}){
   );
 }
 
-export default function App(){return <GDSStudio/>;}
+export default function App(){
+  const[showApp,setShowApp]=useState(
+    typeof window!=='undefined'&&
+    (window.location.search.includes('app=1')||
+     window.location.pathname.startsWith('/app'))
+  );
+  if(showApp)return<GDSStudio/>;
+  return<LandingPage onEnter={()=>{
+    window.history.pushState({},'','/?app=1');
+    setShowApp(true);
+  }}/>;
+}
 
 const LCOLS=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6','#bfef45','#fabed4','#469990'];
 const fmtNm=v=>(!Number.isFinite(v)||isNaN(v))?'?':v>=1000?`${(v/1000).toFixed(3)} μm`:`${v.toFixed(0)} nm`;

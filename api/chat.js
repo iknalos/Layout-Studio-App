@@ -5,39 +5,31 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const models = ['glm-5-turbo', 'glm-5', 'GLM-4.5', 'GLM-4-Plus'];
+  try {
+    const body = {
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 2000,
+      temperature: 0.1,
+      messages: req.body.messages
+    };
 
-  for (const model of models) {
-    try {
-      const body = { ...req.body, model, request_id: undefined };
-      const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.ZAI_API_KEY}`
-        },
-        body: JSON.stringify(body)
-      });
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
+      },
+      body: JSON.stringify(body)
+    });
 
-      const text = await response.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { error: { message: text } }; }
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: { message: text } }; }
 
-      // Log for debugging in Vercel logs
-      console.log(`Model: ${model}, Status: ${response.status}, Response: ${text.slice(0, 300)}`);
-
-      if (response.status === 429 || response.status === 503) { continue; }
-      if (data.error?.code === 'concurrency_limit_exceeded' ||
-          data.error?.code === 'rate_limit_exceeded' ||
-          data.error?.type === 'concurrency_limit_exceeded') { continue; }
-
-      res.status(200).json({ ...data, _model_used: model });
-      return;
-    } catch (err) {
-      console.log(`${model} error: ${err.message}`);
-      continue;
-    }
+    console.log(`Groq status: ${response.status}, response: ${text.slice(0, 200)}`);
+    res.status(200).json(data);
+  } catch (err) {
+    console.log(`Error: ${err.message}`);
+    res.status(500).json({ error: err.message });
   }
-
-  res.status(503).json({ error: 'All models busy. Please try again.' });
 }

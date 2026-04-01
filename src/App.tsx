@@ -183,21 +183,17 @@ function LandingPage({onEnter}){
 export default function App(){
   const[showApp,setShowApp]=useState(
     typeof window!=='undefined'&&
-    (window.location.search.includes('app=1')||
-     window.location.pathname.startsWith('/app'))
+    (window.location.search.includes('app=1')||window.location.pathname.startsWith('/app'))
   );
   if(showApp)return<GDSStudio/>;
-  return<LandingPage onEnter={()=>{
-    window.history.pushState({},'','/?app=1');
-    setShowApp(true);
-  }}/>;
+  return<LandingPage onEnter={()=>{window.history.pushState({},'','/?app=1');setShowApp(true);}}/>;
 }
 
 const LCOLS=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6','#bfef45','#fabed4','#469990'];
 const fmtNm=v=>(!Number.isFinite(v)||isNaN(v))?'?':v>=1000?`${(v/1000).toFixed(3)} μm`:`${v.toFixed(0)} nm`;
 const lCol=(lc,l)=>lc[l]||LCOLS[l%LCOLS.length];
 const hexA=(h,a)=>{try{const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return`rgba(${r},${g},${b},${a})`;}catch{return`rgba(100,100,200,${a})`;}}
-const tb=(on=true,hi=false,danger=false)=>({padding:'2px 8px',background:danger?'#ffe0e0':hi?'#e8ffe8':on?'#e0e8ff':'#f0f0f0',border:`1px solid ${danger?'#f88':hi?'#4a4':on?'#88a':'#ccc'}`,borderRadius:4,color:danger?'#a00':hi?'#040':on?'#226':'#999',cursor:on?'pointer':'not-allowed',fontSize:11,whiteSpace:'nowrap'});
+const tb=(on=true,hi=false,danger=false)=>({padding:'4px 10px',background:danger?'#ffe0e0':hi?'#e8ffe8':on?'#e0e8ff':'#f0f0f0',border:`1px solid ${danger?'#f88':hi?'#4a4':on?'#88a':'#ccc'}`,borderRadius:4,color:danger?'#a00':hi?'#040':on?'#226':'#999',cursor:on?'pointer':'not-allowed',fontSize:12,whiteSpace:'nowrap'});
 const actBtn=(bg,col)=>({padding:'4px 6px',background:bg,border:`1px solid ${col}44`,borderRadius:4,color:col,cursor:'pointer',fontSize:10,fontWeight:'bold',width:'100%'});
 
 // ── GDS PARSER ────────────────────────────────────────────
@@ -447,7 +443,6 @@ function drawCell(ctx,cell,map,lc,lv,tr,W,H,depth,lib){
         let sx0=1e9,sy0=1e9,sx1=-1e9,sy1=-1e9;
         for(const p of e.xy){const cx2=tx+p[0]*s,cy2=ty-p[1]*s;if(cx2<sx0)sx0=cx2;if(cx2>sx1)sx1=cx2;if(cy2<sy0)sy0=cy2;if(cy2>sy1)sy1=cy2;}
         if(sx1<-10||sx0>W+10||sy1<-10||sy0>H+10)continue;if(sx1-sx0<0.5&&sy1-sy0<0.5)continue;
-        // Detect circle: compute actual centroid + radii for accuracy
         let isCircular=false,pcx=(sx0+sx1)/2,pcy=(sy0+sy1)/2,prad=(sx1-sx0+sy1-sy0)/4;
         if(e.xy.length>=8){
           const gcx=e.xy.reduce((s,p)=>s+p[0],0)/e.xy.length;
@@ -571,33 +566,20 @@ function GDSStudio(){
   libRef.current=lib;selRef.current=selCell;
 
   const pushHist=useCallback((newLib)=>{const h=histRef.current;const json=JSON.stringify(newLib);const newStack=[...h.stack.slice(0,h.idx+1),json].slice(-30);histRef.current={stack:newStack,idx:newStack.length-1};},[]);
-
   const applyLib=useCallback((newLib,msg)=>{const cm={};newLib.cells.forEach(c=>{cm[c.name]=c;});const updated={...newLib,cellMap:cm};pushHist(updated);libRef.current=updated;setLib(updated);if(selRef.current){const uc=cm[selRef.current.name];if(uc){selRef.current=uc;setSelCell(uc);}}if(msg)setStatus(msg);return updated;},[pushHist]);
-
   const undo=useCallback(()=>{const h=histRef.current;if(h.idx<=0)return;const newIdx=h.idx-1;const parsed=JSON.parse(h.stack[newIdx]);const cm={};parsed.cells.forEach(c=>{cm[c.name]=c;});const restored={...parsed,cellMap:cm};histRef.current={...h,idx:newIdx};libRef.current=restored;setLib(restored);if(selRef.current){const uc=cm[selRef.current.name];selRef.current=uc||null;setSelCell(uc||null);}setSelEl(null);setStatus('↩ Undo');},[]);
-
   const redo=useCallback(()=>{const h=histRef.current;if(h.idx>=h.stack.length-1)return;const newIdx=h.idx+1;const parsed=JSON.parse(h.stack[newIdx]);const cm={};parsed.cells.forEach(c=>{cm[c.name]=c;});const restored={...parsed,cellMap:cm};histRef.current={...h,idx:newIdx};libRef.current=restored;setLib(restored);if(selRef.current){const uc=cm[selRef.current.name];selRef.current=uc||null;setSelCell(uc||null);}setSelEl(null);setStatus('↪ Redo');},[]);
-
   const getActiveCell=useCallback(()=>selRef.current||(libRef.current?.cells?.length?libRef.current.cells[libRef.current.cells.length-1]:null),[]);
-
   const addElements=useCallback((els)=>{const cell=getActiveCell();const cl=libRef.current;if(!cell||!cl){setStatus('⚠ No cell. Load a file or use AI first.');return;}const newCell={...cell,elements:[...cell.elements,...els]};const newCells=cl.cells.map(c=>c.name===cell.name?newCell:c);applyLib({...cl,cells:newCells},`Added ${els.length} element(s)`);setSelEl(null);},[getActiveCell,applyLib]);
-
   const deleteSelEl=useCallback(()=>{if(!selEl)return;const cell=getActiveCell();const cl=libRef.current;if(!cell||!cl)return;const newCell={...cell,elements:cell.elements.filter((_,i)=>i!==selEl.elIdx)};const newCells=cl.cells.map(c=>c.name===cell.name?newCell:c);applyLib({...cl,cells:newCells},'Element deleted');setSelEl(null);},[selEl,getActiveCell,applyLib]);
-
   const updateSelEl=useCallback((newEl,push=true)=>{if(!selEl)return;const cell=getActiveCell();const cl=libRef.current;if(!cell||!cl)return;const newElements=cell.elements.map((e,i)=>i===selEl.elIdx?newEl:e);const newCell={...cell,elements:newElements};const newCells=cl.cells.map(c=>c.name===cell.name?newCell:c);const cm={};[...newCells].forEach(c=>{cm[c.name]=c;});const updated={...cl,cells:newCells,cellMap:cm};if(push)pushHist(updated);libRef.current=updated;setLib(updated);selRef.current=newCell;setSelCell(newCell);setSelEl({...selEl,bb:elemBBox(newEl)||selEl.bb,el:newEl});},[selEl,getActiveCell,pushHist]);
-
   const allLayers=useMemo(()=>{if(!lib)return[];const s=new Set();lib.cells.forEach(c=>c.elements.forEach(e=>{if(e.layer!=null)s.add(e.layer);}));return[...s].sort((a,b)=>a-b);},[lib]);
-
   useEffect(()=>{const nc={...lc},nv={...lv};let ch=false;allLayers.forEach(l=>{if(!nc[l]){nc[l]=LCOLS[l%LCOLS.length];ch=true;}if(nv[l]===undefined){nv[l]=true;ch=true;}});if(ch){setLc(nc);setLv(nv);}},[allLayers.join(',')]);
-
   const fitView=useCallback(()=>{const cv=cvRef.current,cl=libRef.current;if(!cv||!cl||cv.width===0)return;const cell=selRef.current||(cl.cells.length?cl.cells[cl.cells.length-1]:null);let bb=cell?cellBBox(cell,cl.cellMap,4):null;if(!bb){let x0=1e15,y0=1e15,x1=-1e15,y1=-1e15;for(const c of cl.cells){const b=cellBBox(c,cl.cellMap,4);if(b){if(b.x0<x0)x0=b.x0;if(b.y0<y0)y0=b.y0;if(b.x1>x1)x1=b.x1;if(b.y1>y1)y1=b.y1;}}if(x0<1e15)bb={x0,y0,x1,y1};}if(!bb)return;const W=cv.width,H=cv.height,m=0.1,s=Math.min((W*(1-2*m))/(bb.x1-bb.x0||1),(H*(1-2*m))/(bb.y1-bb.y0||1));setTr({s,x:W/2-(bb.x0+bb.x1)/2*s,y:H/2+(bb.y0+bb.y1)/2*s});},[]);
-
   useEffect(()=>{if(lib)setTimeout(fitView,80);},[lib,selCell]);
   useEffect(()=>{if(pending&&lib){const c=lib.cellMap[pending];if(c){setSelCell(c);setPending(null);setTimeout(fitView,80);}}},[pending,lib]);
-
   useEffect(()=>{const el=contRef.current;if(!el)return;const obs=new ResizeObserver(([en])=>{const{width:w,height:h}=en.contentRect;const cv=cvRef.current;if(cv){cv.width=Math.floor(w);cv.height=Math.floor(h);}setCsize({w:Math.floor(w),h:Math.floor(h)});});obs.observe(el);return()=>obs.disconnect();},[]);
 
-  // Canvas render
   useEffect(()=>{
     const cv=cvRef.current;if(!cv||cv.width===0)return;
     const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
@@ -608,9 +590,7 @@ function GDSStudio(){
     if(snapOn&&gridSize>0){const gsd=gridSize*tr.s;if(gsd>8){ctx.fillStyle=polarInvert?'rgba(255,255,255,0.2)':'rgba(0,100,200,0.3)';const sx=((tr.x%gsd)+gsd)%gsd,sy=((tr.y%gsd)+gsd)%gsd;for(let x=sx;x<W;x+=gsd)for(let y=sy;y<H;y+=gsd)ctx.fillRect(x-1.5,y-1.5,3,3);}}
     const cell=selCell||(lib&&lib.cells.length?lib.cells[lib.cells.length-1]:null);
     if(cell&&lib){if(polarInvert){ctx.save();ctx.globalCompositeOperation='screen';}drawCell(ctx,cell,lib.cellMap,lc,lv,tr,W,H,12,lib);if(polarInvert)ctx.restore();}
-    // Selection highlight
     if(selEl&&selEl.bb){const bb=selEl.bb;const sx0=tr.x+bb.x0*tr.s-5,sy0=tr.y-bb.y1*tr.s-5,sw=(bb.x1-bb.x0)*tr.s+10,sh=(bb.y1-bb.y0)*tr.s+10;ctx.strokeStyle='#0066ff';ctx.lineWidth=1.5;ctx.setLineDash([6,3]);ctx.strokeRect(sx0,sy0,sw,sh);ctx.setLineDash([]);if(lib){const nmU=lib.dbUnit*1e9;ctx.fillStyle='#0066ff';ctx.font='bold 10px monospace';ctx.fillText(`${fmtNm((bb.x1-bb.x0)*nmU)} × ${fmtNm((bb.y1-bb.y0)*nmU)}`,sx0+2,sy0-4);}}
-    // Draw preview
     const dCol=lCol(lc,activeLayer);
     if(drawStartRef.current&&(drawMode==='rect'||drawMode==='circle')){
       const[s0x,s0y]=drawStartRef.current;const dc=drawCur||[s0x,s0y];
@@ -626,13 +606,9 @@ function GDSStudio(){
       drawPts.forEach(pt=>{const[px,py]=g2c(pt[0],pt[1],tr);ctx.fillStyle='#fff';ctx.fillRect(px-4,py-4,8,8);ctx.strokeStyle=dCol;ctx.lineWidth=1.5;ctx.strokeRect(px-4,py-4,8,8);});
       ctx.fillStyle='#333';ctx.font='10px monospace';ctx.fillText(`${drawPts.length} pts · Enter=finish · Esc=cancel`,8,H-28);
     }
-    // Wafer template
     if(waferOn&&lib){const waferR=(waferDia*1e6)/(lib.dbUnit*1e9);const[wcx,wcy]=g2c(0,0,tr);const wr=waferR*tr.s;ctx.strokeStyle='rgba(220,50,50,0.5)';ctx.lineWidth=2;ctx.setLineDash([12,6]);ctx.beginPath();ctx.arc(wcx,wcy,wr,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='rgba(220,50,50,0.7)';ctx.font='11px monospace';ctx.fillText(`⌀ ${waferDia}mm`,wcx-20,wcy-wr-5);}
-    // Measurement
     if(sels.length>0&&lib){const nmU=lib.dbUnit*1e9;const SC=['#0066ff','#ff6600'];sels.forEach((s,i)=>{if(!s?.wc)return;const scx=tr.x+s.wc[0]*tr.s,scy=tr.y-s.wc[1]*tr.s,r=Math.max((s.diam||0)/2*tr.s,4);if(!Number.isFinite(scx+scy+r))return;ctx.beginPath();ctx.arc(scx,scy,r+3,0,Math.PI*2);ctx.strokeStyle=SC[i];ctx.lineWidth=2;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=SC[i];ctx.font='bold 11px monospace';ctx.fillText(`${i+1}`,scx+r+5,scy-3);});if(sels.length===2&&sels[0].wc&&sels[1].wc){const ax=tr.x+sels[0].wc[0]*tr.s,ay=tr.y-sels[0].wc[1]*tr.s,bx=tr.x+sels[1].wc[0]*tr.s,by=tr.y-sels[1].wc[1]*tr.s;if(Number.isFinite(ax+ay+bx+by)){ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.strokeStyle='#333';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);const p=Math.hypot(sels[1].wc[0]-sels[0].wc[0],sels[1].wc[1]-sels[0].wc[1])*nmU;ctx.fillStyle='#000';ctx.font='bold 11px monospace';ctx.fillText(`⟷ ${fmtNm(p)}`,(ax+bx)/2+6,(ay+by)/2-5);}}}
-    // Rulers
     rulers.forEach(r=>{const[ax,ay]=g2c(r.p1[0],r.p1[1],tr),cb=g2c(r.p2[0],r.p2[1],tr);ctx.strokeStyle='#9932cc';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(...cb);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#9932cc';ctx.font='bold 10px monospace';ctx.fillText(r.label,(ax+cb[0])/2+3,(ay+cb[1])/2-4);});
-    // Scale bar
     if(lib){const nmPx=tr.s/(lib.dbUnit*1e9);const targetPx=120;const nmRaw=targetPx/nmPx;const mag10=Math.pow(10,Math.floor(Math.log10(nmRaw)));const norm=nmRaw/mag10;const niceNm=norm<1.5?mag10:norm<3.5?2*mag10:norm<7.5?5*mag10:10*mag10;const barPx=niceNm*nmPx;const label=niceNm>=1e6?`${niceNm/1e6}mm`:niceNm>=1000?`${niceNm/1000}μm`:`${niceNm}nm`;const bx=16,by=H-16;ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fillRect(bx-4,by-22,barPx+8,26);ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+barPx,by);ctx.moveTo(bx,by-6);ctx.lineTo(bx,by+1);ctx.moveTo(bx+barPx,by-6);ctx.lineTo(bx+barPx,by+1);ctx.stroke();ctx.fillStyle='#333';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText(label,bx+barPx/2,by-9);ctx.textAlign='left';}
     const[ocx,ocy]=g2c(0,0,tr);if(ocx>0&&ocx<W&&ocy>0&&ocy<H){ctx.strokeStyle='rgba(100,100,200,0.4)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(ocx,0);ctx.lineTo(ocx,H);ctx.stroke();ctx.beginPath();ctx.moveTo(0,ocy);ctx.lineTo(W,ocy);ctx.stroke();ctx.setLineDash([]);}
   },[lib,selCell,lc,lv,tr,csize,sels,selEl,drawMode,drawPts,drawCur,activeLayer,snapOn,gridSize,waferOn,waferDia,polarInvert,rulers]);
@@ -687,7 +663,6 @@ function GDSStudio(){
     if(drawMode==='select'||drawMode==='measure'){setPanning(true);setLastXY({x:e.clientX,y:e.clientY});}
     else if(drawMode==='rect'||drawMode==='circle'){drawStartRef.current=[gx,gy];}
   };
-
   const onMouseMove=e=>{
     const{gx,gy}=getCanvasGDS(e);
     setCursor({gx,gy,x:Math.round(gx*(lib?.dbUnit||1e-9)*1e9),y:Math.round(gy*(lib?.dbUnit||1e-9)*1e9)});
@@ -695,7 +670,6 @@ function GDSStudio(){
     if(panning){setTr(t=>({...t,x:t.x+(e.clientX-lastXY.x),y:t.y+(e.clientY-lastXY.y)}));setLastXY({x:e.clientX,y:e.clientY});}
     if(movingRef.current&&selEl){const{startGx,startGy,origEl}=movingRef.current;updateSelEl(translateEl(origEl,gx-startGx,gy-startGy),false);}
   };
-
   const onMouseUp=e=>{
     const{gx,gy}=getCanvasGDS(e);
     const dx=Math.abs(e.clientX-mdRef.current.x),dy=Math.abs(e.clientY-mdRef.current.y);
@@ -713,11 +687,8 @@ function GDSStudio(){
   const exportPNG=()=>{const cv=cvRef.current;if(!cv)return;Object.assign(document.createElement('a'),{href:cv.toDataURL('image/png'),download:'gds_export.png'}).click();};
   const exportGDS=()=>{if(!lib)return;const url=URL.createObjectURL(new Blob([writeGDS(lib)],{type:'application/octet-stream'}));Object.assign(document.createElement('a'),{href:url,download:'output.gds'}).click();URL.revokeObjectURL(url);};
   const exportOAS=()=>{if(!lib)return;try{const url=URL.createObjectURL(new Blob([writeOASIS(lib)],{type:'application/octet-stream'}));Object.assign(document.createElement('a'),{href:url,download:'output.oas'}).click();URL.revokeObjectURL(url);setStatus('✔ OASIS exported');}catch(err){setStatus(`⚠ OASIS: ${err.message}`);}};
-
   const insertAlignMark=()=>{const dbU=lib?.dbUnit||1e-9;const nmU=dbU*1e9;const arm=Math.round(200000/nmU),w=Math.round(10000/nmU);addElements(crossEls(0,0,arm,w,activeLayer));setStatus('Alignment cross added');};
-
   const mergeLayersOp=()=>{const cell=getActiveCell();const cl=libRef.current;if(!cell||!cl)return;const toAdd=cell.elements.filter(e=>e.type==='boundary'&&e.layer===mergeFrom).map(e=>({...e,layer:mergeTo}));if(!toAdd.length){setStatus(`No boundaries on layer ${mergeFrom}`);return;}applyLib({...cl,cells:cl.cells.map(c=>c.name===cell.name?{...cell,elements:[...cell.elements,...toAdd]}:c)},`Merged L${mergeFrom}→L${mergeTo}`);};
-
   const saveMeasurement=()=>{if(sels.length===2&&sels[0].wc&&sels[1].wc&&lib){const nmU=lib.dbUnit*1e9;const p=Math.hypot(sels[1].wc[0]-sels[0].wc[0],sels[1].wc[1]-sels[0].wc[1])*nmU;setRulers(r=>[...r,{p1:sels[0].wc,p2:sels[1].wc,label:fmtNm(p)}]);setStatus(`Ruler saved: ${fmtNm(p)}`);} };
 
   const submitContact=async()=>{
@@ -782,22 +753,16 @@ RULES:
       const data=await res.json();
       const text=data.choices?.[0]?.message?.content||'';
       if(!text){setMsgs(m=>[...m,{role:'assistant',content:'No response from AI.'}]);setBusy(false);return;}
-      // Extract JSON - try multiple strategies
       let parsed=null;
       const tryParse=s=>{try{return JSON.parse(s);}catch(_e){return null;}};
-      // 1. code fence
       const fm=text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
       if(fm)parsed=tryParse(fm[1]);
-      // 2. first { ... } block
       if(!parsed){const m2=text.match(/\{[\s\S]*\}/);if(m2)parsed=tryParse(m2[0]);}
-      // 3. full text
       if(!parsed)parsed=tryParse(text.trim());
       if(!parsed){setMsgs(m=>[...m,{role:'assistant',content:text}]);setBusy(false);return;}
-
       const safeXY=(e)=>{
         const raw=e.xy||e.points||e.coordinates||[];
         if(!Array.isArray(raw)||raw.length===0)return[];
-        // flat array [x,y,x,y,...] → [[x,y],...]
         if(!Array.isArray(raw[0])){const pairs=[];for(let i=0;i+1<raw.length;i+=2)pairs.push([Math.round(+raw[i]||0),Math.round(+raw[i+1]||0)]);return pairs;}
         return raw.map(pt=>Array.isArray(pt)?[Math.round(+pt[0]||0),Math.round(+pt[1]||0)]:[0,0]);
       };
@@ -831,14 +796,17 @@ RULES:
   const mP=mS0&&mS1&&mS0.wc&&mS1.wc?fmtNm(Math.hypot(mS1.wc[0]-mS0.wc[0],mS1.wc[1]-mS0.wc[1])*nmU):null;
   const selElem=selEl&&getActiveCell()?.elements[selEl.elIdx];
   const selBb=selEl?.bb;
-  const toolBtn=(mode,icon,tip)=>(<button title={tip} onClick={()=>{setDrawMode(mode);if(mode!=='polygon'&&mode!=='path')setDrawPts([]);drawStartRef.current=null;}} style={{width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',background:drawMode===mode?'#e0e8ff':'transparent',border:drawMode===mode?'1px solid #88a':'1px solid transparent',borderRadius:5,cursor:'pointer',fontSize:14,color:drawMode===mode?'#226':'#666',margin:'1px 0'}}>{icon}</button>);
+
+  // ── UPDATED: bigger tool buttons
+  const toolBtn=(mode,icon,tip)=>(<button title={tip} onClick={()=>{setDrawMode(mode);if(mode!=='polygon'&&mode!=='path')setDrawPts([]);drawStartRef.current=null;}} style={{width:38,height:38,display:'flex',alignItems:'center',justifyContent:'center',background:drawMode===mode?'#e0e8ff':'transparent',border:drawMode===mode?'1px solid #88a':'1px solid #eee',borderRadius:7,cursor:'pointer',fontSize:17,color:drawMode===mode?'#226':'#666',margin:'1px 0'}}>{icon}</button>);
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100vh',background:'#f0f0f0',color:'#222',fontFamily:'monospace,sans-serif',fontSize:12}}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}button:active{transform:scale(0.96)}`}</style>
-      {/* TOOLBAR */}
-      <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 8px',background:'#fff',borderBottom:'1px solid #ddd',flexShrink:0,flexWrap:'wrap'}}>
-        <span style={{fontWeight:'bold',color:'#226',marginRight:4}}>⬡ GDS Studio</span>
+
+      {/* ── TOOLBAR (bigger padding + title) ── */}
+      <div style={{display:'flex',alignItems:'center',gap:5,padding:'8px 14px',background:'#fff',borderBottom:'1px solid #ddd',flexShrink:0,flexWrap:'wrap',minHeight:48}}>
+        <span style={{fontWeight:'bold',color:'#226',marginRight:6,fontSize:14}}>⬡ GDS Studio</span>
         <button style={{...tb(),fontSize:11,padding:'2px 8px'}} onClick={()=>window.location.href='/'} title="Back to home">← Home</button>
         <button style={tb()} onClick={()=>fileRef.current&&fileRef.current.click()} disabled={loading}>📂 Open</button>
         <button style={tb(!!lib)} onClick={exportGDS} disabled={!lib||loading}>⬇ GDS</button>
@@ -851,40 +819,43 @@ RULES:
         <button style={tb(true)} onClick={()=>setTr(t=>({...t,s:t.s*1.5}))}>＋</button>
         <button style={tb(true)} onClick={()=>setTr(t=>({...t,s:t.s/1.5}))}>－</button>
         <div style={{width:1,height:18,background:'#ddd',margin:'0 2px'}}/>
-        <label style={{fontSize:10,color:'#888',display:'flex',alignItems:'center',gap:3,cursor:'pointer'}}><input type="checkbox" checked={snapOn} onChange={e=>setSnapOn(e.target.checked)}/>Snap</label>
-        {snapOn&&<input type="number" value={Math.round(gridSize*nmU)} onChange={e=>setGridSize(Math.max(1,+e.target.value)/nmU)} style={{width:55,padding:'2px 4px',fontSize:10,border:'1px solid #ddd',borderRadius:3}}/>}
-        <select value={activeLayer} onChange={e=>setActiveLayer(+e.target.value)} style={{padding:'2px 4px',fontSize:10,border:'1px solid #ddd',borderRadius:3}}>
+        <label style={{fontSize:11,color:'#888',display:'flex',alignItems:'center',gap:3,cursor:'pointer'}}><input type="checkbox" checked={snapOn} onChange={e=>setSnapOn(e.target.checked)}/>Snap</label>
+        {snapOn&&<input type="number" value={Math.round(gridSize*nmU)} onChange={e=>setGridSize(Math.max(1,+e.target.value)/nmU)} style={{width:55,padding:'2px 4px',fontSize:11,border:'1px solid #ddd',borderRadius:3}}/>}
+        <select value={activeLayer} onChange={e=>setActiveLayer(+e.target.value)} style={{padding:'2px 4px',fontSize:11,border:'1px solid #ddd',borderRadius:3}}>
           {[...Array(10).keys()].map(l=><option key={l} value={l}>L{l}</option>)}
         </select>
         <div style={{width:1,height:18,background:'#ddd',margin:'0 2px'}}/>
         <button style={tb(true,waferOn)} onClick={()=>setWaferOn(v=>!v)}>⌀ Wfr</button>
-        {waferOn&&<input type="number" value={waferDia} onChange={e=>setWaferDia(+e.target.value)} style={{width:40,padding:'2px 4px',fontSize:10,border:'1px solid #ddd',borderRadius:3}}/>}
+        {waferOn&&<input type="number" value={waferDia} onChange={e=>setWaferDia(+e.target.value)} style={{width:40,padding:'2px 4px',fontSize:11,border:'1px solid #ddd',borderRadius:3}}/>}
         <button style={tb(true,polarInvert)} onClick={()=>setPolarInvert(v=>!v)}>◐ Pol</button>
         <button style={tb(true)} onClick={insertAlignMark} disabled={!lib}>✛ Mark</button>
         <button style={tb(true,showDrcPanel)} onClick={()=>setShowDrcPanel(v=>!v)}>DRC</button>
         <button style={{...tb(true,tab==='contact'),background:tab==='contact'?'#e0e8ff':'#226',color:tab==='contact'?'#226':'#fff',border:'1px solid #226'}} onClick={()=>setTab('contact')}>💬 Contact</button>
         <div style={{flex:1}}/>
-        {cursor&&<span style={{color:'#aaa',fontSize:10}}>{cursor.x},{cursor.y} nm</span>}
-        {!loading&&<span style={{color:'#888',fontSize:10,maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{status}</span>}
-        {loading&&<span style={{color:'#a60',fontSize:11,display:'flex',gap:3,alignItems:'center'}}><span style={{display:'inline-block',animation:'spin 1s linear infinite'}}>⟳</span>{status}</span>}
+        {cursor&&<span style={{color:'#aaa',fontSize:11}}>{cursor.x},{cursor.y} nm</span>}
+        {!loading&&<span style={{color:'#888',fontSize:11,maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{status}</span>}
+        {loading&&<span style={{color:'#a60',fontSize:12,display:'flex',gap:3,alignItems:'center'}}><span style={{display:'inline-block',animation:'spin 1s linear infinite'}}>⟳</span>{status}</span>}
         <input ref={fileRef} type="file" accept=".gds,.gds2,.oas,.oasis" style={{display:'none'}} onChange={e=>loadFile(e.target.files[0])}/>
       </div>
+
       {/* DRC PANEL */}
-      {showDrcPanel&&<div style={{background:'#fffbf0',borderBottom:'1px solid #e8d',padding:'5px 10px',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',fontSize:11}}>
+      {showDrcPanel&&<div style={{background:'#fffbf0',borderBottom:'1px solid #e8d',padding:'6px 12px',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',fontSize:12}}>
         <span style={{fontWeight:'bold',color:'#664'}}>DRC</span>
-        <label>Min spacing (nm):<input type="number" value={drcMinSp} onChange={e=>setDrcMinSp(+e.target.value)} style={{width:60,marginLeft:4,padding:'1px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
-        <label>Min feature (nm):<input type="number" value={drcMinFeat} onChange={e=>setDrcMinFeat(+e.target.value)} style={{width:60,marginLeft:4,padding:'1px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
+        <label>Min spacing (nm):<input type="number" value={drcMinSp} onChange={e=>setDrcMinSp(+e.target.value)} style={{width:60,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
+        <label>Min feature (nm):<input type="number" value={drcMinFeat} onChange={e=>setDrcMinFeat(+e.target.value)} style={{width:60,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
         <button onClick={()=>{const cell=getActiveCell();if(!cell||!lib){setStatus('No cell');return;}const res=runDRC(cell,lib.dbUnit,drcMinSp,drcMinFeat);setMsgs(m=>[...m,{role:'assistant',content:'DRC Results:\n'+res.join('\n')}]);setTab('ai');}} style={tb(true)}>Run DRC</button>
         <div style={{width:1,height:16,background:'#ddd'}}/>
         <span style={{fontWeight:'bold',color:'#446'}}>Merge</span>
-        <label>From L:<input type="number" value={mergeFrom} onChange={e=>setMergeFrom(+e.target.value)} style={{width:36,marginLeft:4,padding:'1px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
-        <label>To L:<input type="number" value={mergeTo} onChange={e=>setMergeTo(+e.target.value)} style={{width:36,marginLeft:4,padding:'1px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
+        <label>From L:<input type="number" value={mergeFrom} onChange={e=>setMergeFrom(+e.target.value)} style={{width:36,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
+        <label>To L:<input type="number" value={mergeTo} onChange={e=>setMergeTo(+e.target.value)} style={{width:36,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
         <button onClick={mergeLayersOp} style={tb(true)}>Merge</button>
       </div>}
+
       {/* MAIN */}
       <div style={{flex:1,display:'flex',overflow:'hidden'}}>
-        {/* TOOL COLUMN */}
-        <div style={{width:36,background:'#fafafa',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',alignItems:'center',padding:'4px 2px',gap:1,flexShrink:0}}>
+
+        {/* ── TOOL COLUMN (wider + bigger buttons) ── */}
+        <div style={{width:46,background:'#fafafa',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',alignItems:'center',padding:'8px 4px',gap:4,flexShrink:0}}>
           {toolBtn('select','↖','Select (S)')}
           {toolBtn('rect','□','Rectangle (R)')}
           {toolBtn('circle','○','Circle (C)')}
@@ -892,62 +863,67 @@ RULES:
           {toolBtn('path','✏','Path (P)')}
           {toolBtn('measure','◎','Measure (M)')}
         </div>
-        {/* SIDEBAR */}
-        <div style={{width:225,background:'#fff',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',flexShrink:0}}>
+
+        {/* ── SIDEBAR (wider + bigger tabs) ── */}
+        <div style={{width:270,background:'#fff',borderRight:'1px solid #ddd',display:'flex',flexDirection:'column',flexShrink:0}}>
           <div style={{display:'flex',borderBottom:'1px solid #ddd'}}>
             {[['ai','🤖'],['layers','≡'],['cells','⊞'],['props','◈'],['contact','✉']].map(([k,l])=>(
-              <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:'5px 0',background:tab===k?'#f0f4ff':'transparent',border:'none',color:tab===k?'#226':'#888',cursor:'pointer',fontSize:k==='contact'?9:11,borderBottom:tab===k?'2px solid #226':'2px solid transparent'}} title={k}>{k==='contact'?'✉ msg':l}</button>
+              <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:'10px 0',background:tab===k?'#f0f4ff':'transparent',border:'none',color:tab===k?'#226':'#888',cursor:'pointer',fontSize:k==='contact'?11:13,fontWeight:tab===k?'600':'normal',borderBottom:tab===k?'2px solid #226':'2px solid transparent'}} title={k}>{k==='contact'?'✉':l}</button>
             ))}
           </div>
           <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column'}}>
+
             {/* AI TAB */}
             {tab==='ai'&&<>
-              <div style={{flex:1,overflowY:'auto',padding:6,display:'flex',flexDirection:'column',gap:4,minHeight:0}}>
-                {msgs.map((m,i)=><div key={i} style={{padding:'5px 7px',borderRadius:5,fontSize:10,maxWidth:'95%',lineHeight:1.5,background:m.role==='user'?'#e0e8ff':'#f0f8f0',color:m.role==='user'?'#226':'#040',alignSelf:m.role==='user'?'flex-end':'flex-start',whiteSpace:'pre-wrap',border:'1px solid '+(m.role==='user'?'#aac':'#aca')}}>{m.content}</div>)}
-                {busy&&<div style={{padding:'5px 7px',borderRadius:5,fontSize:10,background:'#f0f8f0',color:'#040',alignSelf:'flex-start',border:'1px solid #aca'}}>✦ thinking…</div>}
+              <div style={{flex:1,overflowY:'auto',padding:8,display:'flex',flexDirection:'column',gap:5,minHeight:0}}>
+                {msgs.map((m,i)=><div key={i} style={{padding:'6px 8px',borderRadius:6,fontSize:11,maxWidth:'95%',lineHeight:1.55,background:m.role==='user'?'#e0e8ff':'#f0f8f0',color:m.role==='user'?'#226':'#040',alignSelf:m.role==='user'?'flex-end':'flex-start',whiteSpace:'pre-wrap',border:'1px solid '+(m.role==='user'?'#aac':'#aca')}}>{m.content}</div>)}
+                {busy&&<div style={{padding:'6px 8px',borderRadius:6,fontSize:11,background:'#f0f8f0',color:'#040',alignSelf:'flex-start',border:'1px solid #aca'}}>✦ thinking…</div>}
                 <div ref={msgEnd}/>
               </div>
-              <div style={{padding:'3px 5px',borderTop:'1px solid #eee'}}>
-                <div style={{fontSize:8,color:'#aaa',marginBottom:2}}>QUICK PROMPTS</div>
-                {['Create a circle radius 5μm on layer 0','Add a 20×10μm rectangle on layer 1','Make a grating 8 lines 1μm wide 2μm pitch','Create 5×5 array of 3μm circles pitch 8μm'].map((p,i)=><div key={i} onClick={()=>setInp(p)} style={{padding:'2px 4px',marginBottom:1,background:'#f8f8f8',border:'1px solid #eee',borderRadius:3,fontSize:9,color:'#449',cursor:'pointer'}}>{p}</div>)}
+              <div style={{padding:'4px 6px',borderTop:'1px solid #eee'}}>
+                <div style={{fontSize:9,color:'#aaa',marginBottom:3,fontWeight:'600',letterSpacing:'.05em'}}>QUICK PROMPTS</div>
+                {['Create a circle radius 5μm on layer 0','Add a 20×10μm rectangle on layer 1','Make a grating 8 lines 1μm wide 2μm pitch','Create 5×5 array of 3μm circles pitch 8μm'].map((p,i)=><div key={i} onClick={()=>setInp(p)} style={{padding:'3px 5px',marginBottom:2,background:'#f8f8f8',border:'1px solid #eee',borderRadius:3,fontSize:10,color:'#449',cursor:'pointer'}}>{p}</div>)}
               </div>
-              <div style={{padding:5,borderTop:'1px solid #eee',display:'flex',gap:3}}>
-                <input style={{flex:1,padding:'3px 6px',background:'#fafafa',border:'1px solid #ddd',borderRadius:4,color:'#222',fontSize:10,outline:'none'}} value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendMsg()} placeholder="Describe a shape…"/>
+              <div style={{padding:6,borderTop:'1px solid #eee',display:'flex',gap:3}}>
+                <input style={{flex:1,padding:'4px 7px',background:'#fafafa',border:'1px solid #ddd',borderRadius:4,color:'#222',fontSize:11,outline:'none'}} value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendMsg()} placeholder="Describe a shape…"/>
                 {busy?<button onClick={()=>{abortRef.current&&abortRef.current.abort();setBusy(false);}} style={tb(true,false,true)}>✕</button>:<button onClick={sendMsg} style={tb(true)}>➤</button>}
               </div>
             </>}
+
             {/* LAYERS TAB */}
-            {tab==='layers'&&<div style={{padding:7}}>
-              {allLayers.length===0&&<div style={{color:'#aaa',textAlign:'center',marginTop:12,fontSize:11}}>No layers</div>}
-              {allLayers.map(l=><div key={l} style={{display:'flex',alignItems:'center',gap:5,marginBottom:3,padding:'3px 5px',background:'#f8f8f8',borderRadius:4,border:'1px solid #eee'}}>
-                <input type="color" value={lc[l]||'#888'} onChange={e=>setLc(p=>({...p,[l]:e.target.value}))} style={{width:16,height:16,border:'none',cursor:'pointer',padding:0}}/>
-                <span style={{flex:1,fontSize:11}}>Layer {l}</span>
+            {tab==='layers'&&<div style={{padding:8}}>
+              {allLayers.length===0&&<div style={{color:'#aaa',textAlign:'center',marginTop:16,fontSize:12}}>No layers loaded</div>}
+              {allLayers.map(l=><div key={l} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,padding:'4px 6px',background:'#f8f8f8',borderRadius:5,border:'1px solid #eee'}}>
+                <input type="color" value={lc[l]||'#888'} onChange={e=>setLc(p=>({...p,[l]:e.target.value}))} style={{width:18,height:18,border:'none',cursor:'pointer',padding:0}}/>
+                <span style={{flex:1,fontSize:12}}>Layer {l}</span>
                 <input type="checkbox" checked={lv[l]!==false} onChange={e=>setLv(p=>({...p,[l]:e.target.checked}))}/>
               </div>)}
             </div>}
+
             {/* CELLS TAB */}
-            {tab==='cells'&&<div style={{padding:5}}>
-              {!lib&&<div style={{color:'#aaa',textAlign:'center',marginTop:12,fontSize:11}}>No file loaded</div>}
-              {lib&&lib.cells.map(c=><div key={c.name} onClick={()=>{const ns=selCell&&selCell.name===c.name?null:c;setSelCell(ns);selRef.current=ns;setSelEl(null);}} style={{padding:'4px 6px',marginBottom:2,borderRadius:4,cursor:'pointer',background:selCell&&selCell.name===c.name?'#e0e8ff':'#f8f8f8',border:`1px solid ${selCell&&selCell.name===c.name?'#aac':'#eee'}`}}>
-                <div style={{color:selCell&&selCell.name===c.name?'#226':'#333',fontWeight:'bold',fontSize:10}}>{c.name}</div>
-                <div style={{color:'#aaa',fontSize:9}}>{c.elements.length} elements</div>
+            {tab==='cells'&&<div style={{padding:6}}>
+              {!lib&&<div style={{color:'#aaa',textAlign:'center',marginTop:16,fontSize:12}}>No file loaded</div>}
+              {lib&&lib.cells.map(c=><div key={c.name} onClick={()=>{const ns=selCell&&selCell.name===c.name?null:c;setSelCell(ns);selRef.current=ns;setSelEl(null);}} style={{padding:'5px 7px',marginBottom:3,borderRadius:5,cursor:'pointer',background:selCell&&selCell.name===c.name?'#e0e8ff':'#f8f8f8',border:`1px solid ${selCell&&selCell.name===c.name?'#aac':'#eee'}`}}>
+                <div style={{color:selCell&&selCell.name===c.name?'#226':'#333',fontWeight:'bold',fontSize:11}}>{c.name}</div>
+                <div style={{color:'#aaa',fontSize:10}}>{c.elements.length} elements</div>
               </div>)}
             </div>}
+
             {/* PROPS TAB */}
-            {tab==='props'&&<div style={{padding:7}}>
-              {!selElem&&<div style={{color:'#aaa',fontSize:11,textAlign:'center',marginTop:16}}>↖ Click an element<br/>to inspect it</div>}
+            {tab==='props'&&<div style={{padding:8}}>
+              {!selElem&&<div style={{color:'#aaa',fontSize:12,textAlign:'center',marginTop:20}}>↖ Click an element<br/>to inspect it</div>}
               {selElem&&<>
-                <div style={{background:'#f0f4ff',borderRadius:5,padding:7,marginBottom:6,border:'1px solid #aac'}}>
-                  <div style={{fontWeight:'bold',color:'#226',fontSize:12,marginBottom:5}}>{selElem.type.toUpperCase()}</div>
-                  <div style={{fontSize:10,color:'#555',lineHeight:1.8}}>
+                <div style={{background:'#f0f4ff',borderRadius:6,padding:8,marginBottom:8,border:'1px solid #aac'}}>
+                  <div style={{fontWeight:'bold',color:'#226',fontSize:13,marginBottom:6}}>{selElem.type.toUpperCase()}</div>
+                  <div style={{fontSize:11,color:'#555',lineHeight:1.9}}>
                     Layer: <b>{selElem.layer}</b><br/>
                     {selBb&&<>Size: <b>{fmtNm((selBb.x1-selBb.x0)*nmU)} × {fmtNm((selBb.y1-selBb.y0)*nmU)}</b><br/>Center: <b>({fmtNm(((selBb.x0+selBb.x1)/2)*nmU)}, {fmtNm(((selBb.y0+selBb.y1)/2)*nmU)})</b><br/></>}
                     {(selElem.type==='boundary'||selElem.type==='path')&&<>Vertices: <b>{selElem.xy.length}</b><br/></>}
                     {(selElem.type==='sref'||selElem.type==='aref')&&<>Ref: <b>{selElem.sname}</b><br/></>}
                   </div>
-                  <label style={{fontSize:10}}>Layer: <input type="number" defaultValue={selElem.layer} onBlur={e=>{const nl=+e.target.value;if(!isNaN(nl))updateSelEl({...selElem,layer:nl},true);}} style={{width:40,marginLeft:4,padding:'1px 4px',fontSize:10,border:'1px solid #ccc',borderRadius:3}}/></label>
+                  <label style={{fontSize:11}}>Layer: <input type="number" defaultValue={selElem.layer} onBlur={e=>{const nl=+e.target.value;if(!isNaN(nl))updateSelEl({...selElem,layer:nl},true);}} style={{width:44,marginLeft:4,padding:'2px 4px',fontSize:11,border:'1px solid #ccc',borderRadius:3}}/></label>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5}}>
                   <button onClick={deleteSelEl} style={actBtn('#ffe0e0','#a00')}>🗑 Del</button>
                   <button onClick={()=>{setClipboard(JSON.parse(JSON.stringify(selElem)));setStatus('Copied');}} style={actBtn('#f0f8ff','#226')}>📋 Copy</button>
                   <button onClick={()=>updateSelEl(rotateEl90(selElem),true)} style={actBtn('#f0fff0','#040')}>↻ Rot90</button>
@@ -955,37 +931,39 @@ RULES:
                   <button onClick={()=>updateSelEl(mirrorEl(selElem,'v'),true)} style={actBtn('#fff8f0','#840')}>↕ FlipV</button>
                   <button onClick={()=>{if(selElem)addElements([translateEl(JSON.parse(JSON.stringify(selElem)),500,500)]);}} style={actBtn('#f0f4ff','#226')}>⊕ Dup</button>
                 </div>
-                <div style={{marginTop:6,fontSize:9,color:'#aaa'}}>Arrow keys nudge · Del to delete</div>
+                <div style={{marginTop:8,fontSize:10,color:'#aaa'}}>Arrow keys nudge · Del to delete</div>
               </>}
-              {rulers.length>0&&<div style={{marginTop:10}}>
-                <div style={{fontSize:10,fontWeight:'bold',color:'#666',marginBottom:4}}>Saved Rulers</div>
-                {rulers.map((r,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'2px 5px',background:'#f8f0ff',borderRadius:3,marginBottom:2,fontSize:10}}>
+              {rulers.length>0&&<div style={{marginTop:12}}>
+                <div style={{fontSize:11,fontWeight:'bold',color:'#666',marginBottom:5}}>Saved Rulers</div>
+                {rulers.map((r,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'3px 6px',background:'#f8f0ff',borderRadius:4,marginBottom:2,fontSize:11}}>
                   <span style={{color:'#9932cc'}}>{r.label}</span>
-                  <button onClick={()=>setRulers(rs=>rs.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#999',fontSize:10}}>✕</button>
+                  <button onClick={()=>setRulers(rs=>rs.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#999',fontSize:11}}>✕</button>
                 </div>)}
               </div>}
             </div>}
+
             {/* CONTACT TAB */}
-            {tab==='contact'&&<div style={{padding:10,display:'flex',flexDirection:'column',gap:8}}>
-              <div style={{fontSize:12,fontWeight:'bold',color:'#226'}}>💬 Suggestions & Contact</div>
-              <div style={{fontSize:10,color:'#888',lineHeight:1.6}}>Have a feature request, bug report, or just want to say hi? Drop a message!</div>
+            {tab==='contact'&&<div style={{padding:12,display:'flex',flexDirection:'column',gap:9}}>
+              <div style={{fontSize:13,fontWeight:'bold',color:'#226'}}>💬 Suggestions & Contact</div>
+              <div style={{fontSize:11,color:'#888',lineHeight:1.6}}>Have a feature request, bug report, or just want to say hi? Drop a message!</div>
               <div>
-                <div style={{fontSize:9,color:'#aaa',marginBottom:3}}>Your name</div>
-                <input type="text" placeholder="Your name" value={cForm.name} onChange={e=>setCForm(f=>({...f,name:e.target.value}))} style={{width:'100%',padding:'6px 8px',border:'1px solid #ddd',borderRadius:4,fontSize:11,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
+                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Your name</div>
+                <input type="text" placeholder="Your name" value={cForm.name} onChange={e=>setCForm(f=>({...f,name:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
               </div>
               <div>
-                <div style={{fontSize:9,color:'#aaa',marginBottom:3}}>Email address</div>
-                <input type="email" placeholder="you@example.com" value={cForm.email} onChange={e=>setCForm(f=>({...f,email:e.target.value}))} style={{width:'100%',padding:'6px 8px',border:'1px solid #ddd',borderRadius:4,fontSize:11,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
+                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Email address</div>
+                <input type="email" placeholder="you@example.com" value={cForm.email} onChange={e=>setCForm(f=>({...f,email:e.target.value}))} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',outline:'none',boxSizing:'border-box'}}/>
               </div>
               <div>
-                <div style={{fontSize:9,color:'#aaa',marginBottom:3}}>Message / suggestion</div>
-                <textarea placeholder="Tell me what you'd like to see, or report a bug…" value={cForm.msg} onChange={e=>setCForm(f=>({...f,msg:e.target.value}))} rows={5} style={{width:'100%',padding:'6px 8px',border:'1px solid #ddd',borderRadius:4,fontSize:11,fontFamily:'monospace',resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
+                <div style={{fontSize:10,color:'#aaa',marginBottom:3}}>Message / suggestion</div>
+                <textarea placeholder="Tell me what you'd like to see, or report a bug…" value={cForm.msg} onChange={e=>setCForm(f=>({...f,msg:e.target.value}))} rows={5} style={{width:'100%',padding:'7px 9px',border:'1px solid #ddd',borderRadius:5,fontSize:12,fontFamily:'monospace',resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
               </div>
-              {cStatus&&<div style={{fontSize:10,padding:'5px 8px',borderRadius:4,background:cStatus.startsWith('✅')?'#f0fff0':cStatus.startsWith('⚠')?'#fff0f0':'#f0f4ff',color:cStatus.startsWith('✅')?'#060':cStatus.startsWith('⚠')?'#a00':'#226'}}>{cStatus}</div>}
-              <button onClick={submitContact} style={{padding:'7px 0',background:'#226',border:'none',borderRadius:4,color:'#fff',fontSize:11,cursor:'pointer',fontWeight:'bold'}}>Send message →</button>
+              {cStatus&&<div style={{fontSize:11,padding:'6px 9px',borderRadius:5,background:cStatus.startsWith('✅')?'#f0fff0':cStatus.startsWith('⚠')?'#fff0f0':'#f0f4ff',color:cStatus.startsWith('✅')?'#060':cStatus.startsWith('⚠')?'#a00':'#226'}}>{cStatus}</div>}
+              <button onClick={submitContact} style={{padding:'8px 0',background:'#226',border:'none',borderRadius:5,color:'#fff',fontSize:12,cursor:'pointer',fontWeight:'bold'}}>Send message →</button>
             </div>}
           </div>
         </div>
+
         {/* CANVAS */}
         <div ref={contRef} style={{flex:1,position:'relative',overflow:'hidden'}} onDragOver={e=>{e.preventDefault();setOver(true);}} onDragLeave={()=>setOver(false)} onDrop={e=>{e.preventDefault();setOver(false);const f=e.dataTransfer.files[0];if(f)loadFile(f);}}>
           <canvas ref={cvRef} style={{position:'absolute',top:0,left:0,cursor:drawMode==='select'?'default':'crosshair'}}

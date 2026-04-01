@@ -1,6 +1,185 @@
 // @ts-nocheck
 import{useState,useRef,useEffect,useCallback,useMemo}from"react";
 
+function LandingPage({onEnter}){
+  return(
+    <div style={{background:'#080c14',color:'#f0f4ff',fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',minHeight:'100vh',overflowX:'hidden'}}>
+      <style>{`
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{--accent:#00d4aa;--accent2:#0ea5e9;--muted:#8892a4;--border:#1e2d3d;--card:#0f1825;--bg2:#0d1220}
+        .hex-grid{position:absolute;inset:0;opacity:.06;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V16L28 0l28 16v34z' fill='none' stroke='%2300d4aa' stroke-width='1'/%3E%3Cpath d='M28 100L0 84V50l28-16 28 16v34z' fill='none' stroke='%2300d4aa' stroke-width='1'/%3E%3C/svg%3E");background-size:56px 100px}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+        @keyframes floatup{0%{opacity:0;transform:translateY(30px)}100%{opacity:1;transform:translateY(0)}}
+        .fade-in{animation:floatup .7s ease forwards}
+        .fade-in-2{animation:floatup .7s .15s ease both}
+        .fade-in-3{animation:floatup .7s .3s ease both}
+        .btn-primary{background:#00d4aa;color:#000;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:700;border:none;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:8px}
+        .btn-primary:hover{background:#00eec0;transform:translateY(-2px)}
+        .btn-secondary{background:transparent;color:#f0f4ff;border:1px solid #1e2d3d;padding:13px 26px;border-radius:10px;font-size:15px;cursor:pointer;transition:all .2s}
+        .btn-secondary:hover{border-color:#00d4aa;color:#00d4aa}
+        .feat-card{background:#0f1825;border:1px solid #1e2d3d;border-radius:14px;padding:24px;transition:all .25s}
+        .feat-card:hover{border-color:rgba(0,212,170,.35);transform:translateY(-3px)}
+        .use-tag{background:rgba(255,255,255,.05);color:#8892a4;font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid #1e2d3d;display:inline-block;margin:3px}
+        .step-num{width:56px;height:56px;border-radius:50%;background:#0f1825;border:2px solid #00d4aa;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#00d4aa;margin:0 auto 16px}
+      `}</style>
+
+      {/* NAV */}
+      <nav style={{position:'sticky',top:0,zIndex:100,background:'rgba(8,12,20,0.9)',backdropFilter:'blur(12px)',borderBottom:'1px solid #1e2d3d',padding:'0 5%',height:58,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,fontWeight:700,fontSize:17}}>
+          <div style={{width:30,height:30,background:'linear-gradient(135deg,#00d4aa,#0ea5e9)',borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>⬡</div>
+          Layout Studio
+        </div>
+        <div style={{display:'flex',gap:28}}>
+          {['Features','Formats','How it works'].map(l=><a key={l} href={`#${l.toLowerCase().replace(/ /g,'-')}`} style={{color:'#8892a4',textDecoration:'none',fontSize:14}}>{l}</a>)}
+        </div>
+        <button className="btn-primary" style={{padding:'8px 18px',fontSize:13}} onClick={onEnter}>Open App →</button>
+      </nav>
+
+      {/* HERO */}
+      <section style={{minHeight:'92vh',display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'80px 5% 60px',position:'relative',overflow:'hidden'}}>
+        <div className="hex-grid"/>
+        <div style={{position:'absolute',width:500,height:500,background:'rgba(0,212,170,.1)',borderRadius:'50%',filter:'blur(80px)',top:-100,left:-100,pointerEvents:'none'}}/>
+        <div style={{position:'absolute',width:400,height:400,background:'rgba(14,165,233,.08)',borderRadius:'50%',filter:'blur(80px)',bottom:-50,right:-50,pointerEvents:'none'}}/>
+        <div style={{position:'relative',zIndex:1,maxWidth:780}}>
+          <div className="fade-in" style={{display:'inline-flex',alignItems:'center',gap:6,background:'rgba(0,212,170,.1)',border:'1px solid rgba(0,212,170,.3)',color:'#00d4aa',padding:'5px 14px',borderRadius:20,fontSize:12,fontWeight:600,marginBottom:24,letterSpacing:'.05em'}}>
+            <span style={{width:6,height:6,background:'#00d4aa',borderRadius:'50%',animation:'pulse 2s infinite',display:'inline-block'}}/>
+            Free forever · No sign-up required
+          </div>
+          <h1 className="fade-in-2" style={{fontSize:'clamp(32px,5.5vw,64px)',fontWeight:800,lineHeight:1.1,marginBottom:20,letterSpacing:'-.02em'}}>
+            Design GDS Layouts<br/>
+            <span style={{background:'linear-gradient(135deg,#00d4aa,#0ea5e9)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text'}}>Without the Downloads</span>
+          </h1>
+          <p className="fade-in-3" style={{fontSize:'clamp(15px,2vw,19px)',color:'#8892a4',maxWidth:580,margin:'0 auto 36px',lineHeight:1.65}}>
+            The free, browser-based GDS and OASIS editor with built-in AI. No installation, no license fees — the modern alternative to KLayout and CleWin.
+          </p>
+          <div className="fade-in-3" style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap',marginBottom:22}}>
+            <button className="btn-primary" onClick={onEnter}>⬡ Open Layout Studio — Free</button>
+            <a href="#features" className="btn-secondary" style={{display:'inline-block',textDecoration:'none'}}>See features</a>
+          </div>
+          <div style={{display:'flex',gap:18,justifyContent:'center',flexWrap:'wrap',color:'#8892a4',fontSize:13}}>
+            {['Free forever','No installation','AI-powered','GDS + OASIS','Works on any OS'].map(t=>(
+              <span key={t} style={{display:'flex',alignItems:'center',gap:4}}><span style={{color:'#00d4aa',fontWeight:700}}>✓</span>{t}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* COMPARE BANNER */}
+      <div style={{background:'#0d1220',borderTop:'1px solid #1e2d3d',borderBottom:'1px solid #1e2d3d',padding:'16px 5%',display:'flex',justifyContent:'center',alignItems:'center',gap:14,flexWrap:'wrap',fontSize:13,color:'#8892a4'}}>
+        <span><span style={{color:'#ef4444',fontWeight:600}}>KLayout</span> — 200MB install required</span>
+        <span style={{color:'#1e2d3d'}}>·</span>
+        <span><span style={{color:'#ef4444',fontWeight:600}}>CleWin</span> — €1,295 license fee, Windows only</span>
+        <span style={{color:'#1e2d3d'}}>·</span>
+        <span><span style={{color:'#00d4aa',fontWeight:600}}>Layout Studio</span> — Free, instant, any browser</span>
+      </div>
+
+      {/* FEATURES */}
+      <section id="features" style={{padding:'80px 5%',background:'#080c14'}}>
+        <div style={{textAlign:'center',marginBottom:48}}>
+          <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Features</p>
+          <h2 style={{fontSize:'clamp(24px,3vw,36px)',fontWeight:700,marginBottom:12,letterSpacing:'-.02em'}}>Everything you need. Nothing to install.</h2>
+          <p style={{color:'#8892a4',fontSize:16,maxWidth:540,margin:'0 auto',lineHeight:1.6}}>A complete GDS layout environment that runs entirely in your browser — with AI that understands what you want to build.</p>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(270px,1fr))',gap:18}}>
+          {[
+            {icon:'🤖',bg:'rgba(0,212,170,.1)',title:'AI-Powered Design',desc:'Describe shapes in plain English — "create a 5×5 array of 3μm circles on layer 0" — and the AI generates perfect GDS geometry instantly.'},
+            {icon:'⬡',bg:'rgba(14,165,233,.1)',title:'GDS & OASIS Support',desc:'Open, edit and export .gds, .gds2 and .oas files. Full support for boundaries, paths, cell arrays (AREF), references (SREF) and text.'},
+            {icon:'✏️',bg:'rgba(124,58,237,.1)',title:'Draw Tools',desc:'Rectangle, circle, polygon and path tools with snap-to-grid, real-time preview and precise coordinate display in nm and μm.'},
+            {icon:'◎',bg:'rgba(234,179,8,.1)',title:'Measure & Inspect',desc:'Click any shape to measure diameter and pitch. Save measurements as persistent rulers. Inspect element properties in detail.'},
+            {icon:'🔍',bg:'rgba(239,68,68,.1)',title:'DRC Checks',desc:'Run design rule checks for minimum spacing and feature size violations directly in the browser. Results shown instantly.'},
+            {icon:'⌀',bg:'rgba(16,185,129,.1)',title:'Wafer Template',desc:'Overlay a wafer outline at any diameter. Toggle dark-field / light-field polarity for mask ordering specifications.'},
+            {icon:'↩',bg:'rgba(0,212,170,.1)',title:'Undo / Redo',desc:'30-step history. Select, move, rotate, mirror, copy, delete elements. Arrow-key nudging with shift for coarse steps.'},
+            {icon:'📷',bg:'rgba(14,165,233,.1)',title:'PNG Export',desc:'Export a screenshot of your canvas — perfect for papers, presentations, and fabrication documentation.'},
+            {icon:'✛',bg:'rgba(124,58,237,.1)',title:'Alignment Marks',desc:'Insert standard cruciform alignment marks at the origin with one click — essential for multi-layer mask sets.'},
+          ].map(f=>(
+            <div key={f.title} className="feat-card">
+              <div style={{width:42,height:42,borderRadius:10,background:f.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,marginBottom:14}}>{f.icon}</div>
+              <h3 style={{fontSize:15,fontWeight:600,marginBottom:8}}>{f.title}</h3>
+              <p style={{color:'#8892a4',fontSize:13,lineHeight:1.6}}>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* FORMATS */}
+      <section id="formats" style={{padding:'80px 5%',background:'#0d1220'}}>
+        <div style={{textAlign:'center',marginBottom:48}}>
+          <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>File Formats</p>
+          <h2 style={{fontSize:'clamp(24px,3vw,36px)',fontWeight:700,marginBottom:12,letterSpacing:'-.02em'}}>Import & export industry standards</h2>
+          <p style={{color:'#8892a4',fontSize:16,maxWidth:520,margin:'0 auto',lineHeight:1.6}}>Full read and write support for both major layout formats used in semiconductor and MEMS fabrication.</p>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:20,maxWidth:720,margin:'0 auto'}}>
+          {[
+            {badge:'GDS / GDSII',badgeBg:'rgba(0,212,170,.1)',badgeColor:'#00d4aa',badgeBorder:'rgba(0,212,170,.3)',title:'GDSII Stream Format',desc:'The industry-standard format for IC and mask layout. Supports hierarchical cell arrays, paths, boundaries and text labels.',tags:['IC design','Photonics','E-beam lithography','Foundry submission']},
+            {badge:'OAS / OASIS',badgeBg:'rgba(14,165,233,.1)',badgeColor:'#0ea5e9',badgeBorder:'rgba(14,165,233,.3)',title:'OASIS Format',desc:'The modern successor to GDSII. Smaller files, native circle support and efficient array encoding. Compatible with advanced fabs.',tags:['Advanced nodes','Large layouts','MEMS','Microfluidics']},
+          ].map(f=>(
+            <div key={f.badge} style={{background:'#0f1825',border:'1px solid #1e2d3d',borderRadius:14,padding:30,textAlign:'center'}}>
+              <div style={{display:'inline-block',fontSize:26,fontWeight:900,padding:'10px 20px',borderRadius:10,marginBottom:16,background:f.badgeBg,color:f.badgeColor,border:`1px solid ${f.badgeBorder}`,letterSpacing:'.05em'}}>{f.badge}</div>
+              <h3 style={{fontSize:17,fontWeight:700,marginBottom:8}}>{f.title}</h3>
+              <p style={{color:'#8892a4',fontSize:13,lineHeight:1.6,marginBottom:14}}>{f.desc}</p>
+              <div>{f.tags.map(t=><span key={t} className="use-tag">{t}</span>)}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* HOW IT WORKS */}
+      <section id="how-it-works" style={{padding:'80px 5%',background:'#080c14'}}>
+        <div style={{textAlign:'center',marginBottom:48}}>
+          <p style={{fontSize:12,fontWeight:600,color:'#00d4aa',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>How it works</p>
+          <h2 style={{fontSize:'clamp(24px,3vw,36px)',fontWeight:700,marginBottom:12,letterSpacing:'-.02em'}}>Up and running in seconds</h2>
+          <p style={{color:'#8892a4',fontSize:16,maxWidth:480,margin:'0 auto',lineHeight:1.6}}>No downloads, no account, no credit card. Open your browser and start designing.</p>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:0,maxWidth:800,margin:'0 auto',position:'relative'}}>
+          <div style={{position:'absolute',top:27,left:'12%',right:'12%',height:1,background:'linear-gradient(90deg,transparent,#1e2d3d,#1e2d3d,transparent)'}}/>
+          {[
+            {n:'1',title:'Open in browser',desc:'Click "Open App". Works on Chrome, Firefox, Safari — Mac, Windows, Linux, iPad.'},
+            {n:'2',title:'Load or create',desc:'Drag a .gds or .oas file, or ask the AI to generate shapes from a text description.'},
+            {n:'3',title:'Edit & inspect',desc:'Draw, measure, run DRC checks, adjust layers, navigate cell hierarchy.'},
+            {n:'4',title:'Export',desc:'Download your design as .gds, .oas, or .png — ready for your fab.'},
+          ].map(s=>(
+            <div key={s.n} style={{textAlign:'center',padding:'0 16px',position:'relative',zIndex:1}}>
+              <div className="step-num">{s.n}</div>
+              <h3 style={{fontSize:15,fontWeight:600,marginBottom:7}}>{s.title}</h3>
+              <p style={{color:'#8892a4',fontSize:13,lineHeight:1.6}}>{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section style={{padding:'90px 5%',background:'#080c14',textAlign:'center'}}>
+        <div style={{background:'linear-gradient(135deg,rgba(0,212,170,.07),rgba(14,165,233,.07))',border:'1px solid rgba(0,212,170,.2)',borderRadius:20,padding:'60px 40px',maxWidth:680,margin:'0 auto'}}>
+          <h2 style={{fontSize:'clamp(22px,3vw,36px)',fontWeight:700,marginBottom:14,letterSpacing:'-.02em'}}>Start designing in 10 seconds</h2>
+          <p style={{color:'#8892a4',marginBottom:34,fontSize:16,lineHeight:1.6}}>No installation. No account. No license fee. Just open the app and build your layout — free, forever.</p>
+          <button className="btn-primary" style={{fontSize:16,padding:'15px 36px'}} onClick={onEnter}>⬡ Open Layout Studio — Free</button>
+          <div style={{display:'flex',gap:16,justifyContent:'center',flexWrap:'wrap',marginTop:20,color:'#8892a4',fontSize:13}}>
+            {['Free forever','No sign-up','GDS + OASIS','AI-powered'].map(t=>(
+              <span key={t} style={{display:'flex',alignItems:'center',gap:4}}><span style={{color:'#00d4aa',fontWeight:700}}>✓</span>{t}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer style={{background:'#0d1220',borderTop:'1px solid #1e2d3d',padding:'32px 5%',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:16,fontSize:13,color:'#8892a4'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,fontWeight:700,fontSize:15,color:'#f0f4ff'}}>
+          <div style={{width:24,height:24,background:'linear-gradient(135deg,#00d4aa,#0ea5e9)',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13}}>⬡</div>
+          Layout Studio
+        </div>
+        <div style={{display:'flex',gap:22}}>
+          {[['Open App',onEnter],['Features','#features'],['Formats','#formats'],['How it works','#how-it-works']].map(([l,t])=>(
+            typeof t==='function'
+              ? <button key={l} onClick={t} style={{background:'none',border:'none',color:'#8892a4',cursor:'pointer',fontSize:13}}>{l}</button>
+              : <a key={l} href={t} style={{color:'#8892a4',textDecoration:'none'}}>{l}</a>
+          ))}
+        </div>
+        <span>© 2026 Layout Studio · Free for everyone</span>
+      </footer>
+    </div>
+  );
+}
+
 export default function App(){return <GDSStudio/>;}
 
 const LCOLS=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6','#bfef45','#fabed4','#469990'];
@@ -649,6 +828,7 @@ RULES:
       {/* TOOLBAR */}
       <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 8px',background:'#fff',borderBottom:'1px solid #ddd',flexShrink:0,flexWrap:'wrap'}}>
         <span style={{fontWeight:'bold',color:'#226',marginRight:4}}>⬡ GDS Studio</span>
+        <button style={{...tb(),fontSize:11,padding:'2px 8px'}} onClick={()=>window.location.href='/'} title="Back to home">← Home</button>
         <button style={tb()} onClick={()=>fileRef.current&&fileRef.current.click()} disabled={loading}>📂 Open</button>
         <button style={tb(!!lib)} onClick={exportGDS} disabled={!lib||loading}>⬇ GDS</button>
         <button style={tb(!!lib)} onClick={exportOAS} disabled={!lib}>⬇ OAS</button>

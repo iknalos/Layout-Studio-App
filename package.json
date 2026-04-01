@@ -1,6 +1,7 @@
 {
   "name": "layout-studio-app",
   "version": "1.0.0",
+  "homepage": ".",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

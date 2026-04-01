@@ -2,13 +2,5 @@
   "buildCommand": "npm run build",
   "outputDirectory": "build",
   "installCommand": "npm install",
-  "framework": "create-react-app",
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/static/(.*)", "dest": "/static/$1" },
-    { "src": "/app", "dest": "/app.html" },
-    { "src": "/app/(.*)", "dest": "/app.html" },
-    { "src": "/(.*\\.(js|css|png|ico|json|map))", "dest": "/$1" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  "framework": "create-react-app"
 }

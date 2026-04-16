@@ -1,5 +1,4 @@
-[gds_readme.md](https://github.com/user-attachments/files/26799054/gds_readme.md)
-# ⬡ GDS Studio
+# ⬡ Layout Studio
 
 A fast, browser-based GDS-II layout viewer and AI-powered editor. Built as an alternative to KLayout and CleWin for quick viewing, measuring, and modifying photonic/semiconductor mask layouts — with no installation required.
 
@@ -7,7 +6,7 @@ A fast, browser-based GDS-II layout viewer and AI-powered editor. Built as an al
 
 ## Overview
 
-GDS Studio runs entirely in the browser. It parses, renders, and exports GDS-II binary files client-side, with no data uploaded to any server. An integrated Claude AI assistant allows natural-language shape creation and layout modification directly on the loaded file.
+Layout Studio runs entirely in the browser. It parses, renders, and exports GDS-II binary files client-side, with no data uploaded to any server. An integrated Claude AI assistant allows natural-language shape creation and layout modification directly on the loaded file.
 
 ---
 

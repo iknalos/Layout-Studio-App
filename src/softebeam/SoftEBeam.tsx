@@ -21,6 +21,8 @@ function turbo(t) { // polynomial approximation of the Turbo colormap
     clamp255(27.2 + t * (3211.1 - t * (15327.97 - t * (27814 - t * (22569.18 - t * 6838.66)))))];
 }
 const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
+const col32 = col => { const m = col.match(/\d+/g); if (col[0] === '#') { const v = parseInt(col.slice(1, 7), 16); return (255 << 24 | (v & 255) << 16 | ((v >> 8) & 255) << 8 | (v >> 16)) >>> 0; } return (255 << 24 | (+m[2]) << 16 | (+m[1]) << 8 | (+m[0])) >>> 0; };
+const ORDER_BINS = 48, orderCol = b => rgb(turbo(0.06 + 0.88 * b / (ORDER_BINS - 1)));
 const download = (data, name, type = 'application/octet-stream') => { const u = URL.createObjectURL(new Blob([data], { type })); Object.assign(document.createElement('a'), { href: u, download: name }).click(); setTimeout(() => URL.revokeObjectURL(u), 2000); };
 const LS_KEY = 'softebeam:flow:v1', LS_PSF = 'softebeam:psf:v1';
 const psfGet = () => { try { return JSON.parse(localStorage.getItem(LS_PSF) || 'null'); } catch { return null; } };
@@ -158,7 +160,7 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     fields.seq.forEach((i, p) => { rank[i] = p; });
     return { cx, cy, rank, seq: fields.seq, N: n };
   }, [fields]);
-  const [playK, setPlayK] = useState(null), [playing, setPlaying] = useState(false), [dur, setDur] = useState(10), kRef = useRef(0);
+  const [playK, setPlayK] = useState(null), [playing, setPlaying] = useState(false), [dur, setDur] = useState(10), kRef = useRef(0), playOn = playK != null;
   useEffect(() => { setPlaying(false); setPlayK(null); }, [orderData]);
   useEffect(() => {
     if (!playing || !orderData) return; let raf, last = performance.now();
@@ -179,17 +181,54 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#fbfbfc'; ctx.fillRect(0, 0, size.w, size.h);
     const { s } = tr, X = x => tr.x + x * s, Y = y => tr.y - y * s;
     const vx0 = -tr.x / s, vx1 = (size.w - tr.x) / s, vy0 = (tr.y - size.h) / s, vy1 = tr.y / s;
-    const trapPath = (t, o) => { ctx.moveTo(X(t[o + 2]), Y(t[o])); ctx.lineTo(X(t[o + 3]), Y(t[o])); ctx.lineTo(X(t[o + 5]), Y(t[o + 1])); ctx.lineTo(X(t[o + 4]), Y(t[o + 1])); ctx.closePath(); };
+    // no closePath(): fill closes sub-paths implicitly, and Chrome's closePath gets quadratic on 10⁵-sub-path paths
+    const trapPath = (t, o) => { const x0 = X(t[o + 2]), y0 = Y(t[o]); ctx.moveTo(x0, y0); ctx.lineTo(X(t[o + 3]), y0); ctx.lineTo(X(t[o + 5]), Y(t[o + 1])); ctx.lineTo(X(t[o + 4]), Y(t[o + 1])); ctx.lineTo(x0, y0); };
+    const CHUNK = 4000; // flush long paths in chunks
     const visible = (t, o) => !(t[o + 1] < vy0 || t[o] > vy1 || Math.max(t[o + 3], t[o + 5]) < vx0 || Math.min(t[o + 2], t[o + 4]) > vx1);
-    const drawTraps = (src, fill, stroke, lw = 1) => { if (!src) return; const t = src.t; ctx.beginPath(); for (let i = 0; i < src.n; i++) { const o = i * 6; if (visible(t, o)) trapPath(t, o); } if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); } };
+    const drawTraps = (src, fill, stroke, lw = 1) => {
+      if (!src) return; const t = src.t; if (fill) ctx.fillStyle = fill; if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; }
+      let k = 0; const flush = () => { if (fill) ctx.fill(); if (stroke) ctx.stroke(); ctx.beginPath(); k = 0; };
+      ctx.beginPath(); for (let i = 0; i < src.n; i++) { const o = i * 6; if (!visible(t, o)) continue; trapPath(t, o); if (++k >= CHUNK) flush(); } flush();
+    };
+    // Level of detail: figures smaller than a pixel go straight into the pixel buffer (one write each) instead of
+    // becoming vector sub-paths — keeps 10⁵–10⁶-figure layouts responsive. batches: [{col, n, at(k) → figure index}]
+    const Wd = c.width, Hd = c.height, blk = Math.max(1, Math.round(dpr)); let img = null, px32 = null;
+    const paint = (t, batches, stroke) => {
+      const bigs = [];
+      for (const b of batches) {
+        const L = [], cc = col32(b.col);
+        for (let k = 0; k < b.n; k++) {
+          const i = b.at(k), o = i * 6; if (!visible(t, o)) continue;
+          if ((Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4])) * s < 1 && (t[o + 1] - t[o]) * s < 1) {
+            if (!img) { img = ctx.getImageData(0, 0, Wd, Hd); px32 = new Uint32Array(img.data.buffer); }
+            const x = (X(0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5])) * dpr) | 0, y = (Y(0.5 * (t[o] + t[o + 1])) * dpr) | 0;
+            for (let dy = 0; dy < blk; dy++) for (let dx = 0; dx < blk; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < Wd && yy < Hd) px32[yy * Wd + xx] = cc; }
+          } else L.push(o);
+        }
+        bigs.push([b.col, L]);
+      }
+      if (img) { ctx.putImageData(img, 0, 0); img = null; }
+      for (const [col, L] of bigs) {
+        if (!L.length) continue; ctx.fillStyle = col; if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 0.8; }
+        for (let a = 0; a < L.length; a += CHUNK) { ctx.beginPath(); for (let k = a; k < Math.min(L.length, a + CHUNK); k++) trapPath(t, L[k]); ctx.fill(); if (stroke) ctx.stroke(); }
+      }
+    };
+    const all = n => ({ n, at: k => k });
     if (view === 'layout' && rings) {
       const byL = new Map(); for (let i = 0; i < rings.layer.length; i++) { const l = rings.layer[i]; let a = byL.get(l); if (!a) byL.set(l, a = []); a.push(i); }
-      let li = 0; for (const [, idx] of byL) { const col = LCOL[li++ % LCOL.length]; ctx.beginPath(); for (const i of idx) { const a = rings.off[i], b = rings.off[i + 1]; ctx.moveTo(X(rings.xy[a]), Y(rings.xy[a + 1])); for (let k = a + 2; k < b; k += 2) ctx.lineTo(X(rings.xy[k]), Y(rings.xy[k + 1])); ctx.closePath(); } ctx.fillStyle = col + '30'; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke(); }
+      let li = 0; for (const [, idx] of byL) {
+        const col = LCOL[li++ % LCOL.length]; ctx.fillStyle = col + '30'; ctx.strokeStyle = col; ctx.lineWidth = 1;
+        for (let c0 = 0; c0 < idx.length; c0 += CHUNK) {
+          ctx.beginPath();
+          for (let q = c0; q < Math.min(idx.length, c0 + CHUNK); q++) { const i = idx[q], a = rings.off[i], b = rings.off[i + 1]; const x0 = X(rings.xy[a]), y0 = Y(rings.xy[a + 1]); ctx.moveTo(x0, y0); for (let k = a + 2; k < b; k += 2) ctx.lineTo(X(rings.xy[k]), Y(rings.xy[k + 1])); ctx.lineTo(x0, y0); }
+          ctx.fill(); ctx.stroke();
+        }
+      }
     }
-    if (view === 'fractured' && traps) drawTraps(traps, 'rgba(37,99,235,.14)', '#2563eb', 0.8);
+    if (view === 'fractured' && traps) paint(traps.t, [{ col: 'rgb(214,224,247)', ...all(traps.n) }], '#2563eb');
     if ((view === 'dose' || view === 'fields') && classIdx) {
       const t = classIdx.src.frags.t;
-      classIdx.L.forEach((idx, c) => { if (!idx.length) return; ctx.beginPath(); for (const i of idx) { const o = i * 6; if (visible(t, o)) trapPath(t, o); } ctx.fillStyle = classIdx.col[c]; ctx.fill(); });
+      paint(t, classIdx.L.map((idx, c) => ({ col: classIdx.col[c] || '#999', n: idx.length, at: k => idx[k] })).filter(b => b.n));
       if (overlays.outlines) drawTraps(classIdx.src.frags, null, 'rgba(0,0,0,.35)', 0.6);
       if (overlays.ctrl && view === 'dose' && pec.ctrl) { const n = pec.ctrl.length / 2; for (let g = 0; g < n; g++) { const x = X(pec.ctrl[2 * g]), y = Y(pec.ctrl[2 * g + 1]); if (x < -4 || x > size.w + 4 || y < -4 || y > size.h + 4) continue; ctx.fillStyle = pec.kind[g] ? '#111' : '#fff'; ctx.fillRect(x - 1.5, y - 1.5, 3, 3); } }
     }
@@ -202,9 +241,10 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       ctx.fillStyle = C.beam; ctx.font = 'bold 11px system-ui'; ord.forEach((f, k) => { const F = fields.fields[f]; if ((F.x1 - F.x0) * s > 26) ctx.fillText(String(k + 1), X(F.x0) + 4, Y(F.y1) + 13); });
     }
     if (view === 'order' && fields && orderData) {
-      const t = fields.frags.t, { seq, N, cx, cy } = orderData, K = playK == null ? N : Math.min(N, Math.floor(playK)), NB = 48;
-      if (K < N) { ctx.beginPath(); for (let p = K; p < N; p++) { const o = seq[p] * 6; if (visible(t, o)) trapPath(t, o); } ctx.fillStyle = '#dfe3e9'; ctx.fill(); }
-      for (let b = 0; b < NB; b++) { const a0 = Math.floor(b * N / NB), a1 = Math.min(K, Math.floor((b + 1) * N / NB)); if (a0 >= K) break; ctx.beginPath(); for (let p = a0; p < a1; p++) { const o = seq[p] * 6; if (visible(t, o)) trapPath(t, o); } ctx.fillStyle = rgb(turbo(0.06 + 0.88 * b / (NB - 1))); ctx.fill(); }
+      // while playing, this layer is static (all figures pending, grey); the overlay canvas adds written figures
+      const t = fields.frags.t, { seq, N, cx, cy } = orderData, K = playOn ? 0 : N;
+      if (playOn) paint(t, [{ col: 'rgb(223,227,233)', n: N, at: k => seq[k] }]);
+      else paint(t, Array.from({ length: ORDER_BINS }, (_, b) => { const a0 = Math.floor(b * N / ORDER_BINS), a1 = Math.floor((b + 1) * N / ORDER_BINS); return { col: orderCol(b), n: a1 - a0, at: k => seq[a0 + k] }; }));
       if (fields.fieldsOn) { ctx.strokeStyle = 'rgba(194,65,12,.55)'; ctx.lineWidth = 1; ctx.setLineDash([5, 3]); for (const f of fields.fields) ctx.strokeRect(X(f.x0), Y(f.y1), (f.x1 - f.x0) * s, (f.y1 - f.y0) * s); ctx.setLineDash([]); }
       if (overlays.path && K > 1) {
         const stp = Math.max(1, Math.ceil(N / 40000)), ff = fields.fragField; ctx.strokeStyle = 'rgba(17,24,39,.6)'; ctx.lineWidth = 0.9; ctx.beginPath();
@@ -215,7 +255,10 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       if (fields.fieldsOn && overlays.order) { const used = new Set(fields.fragField), ord = fields.fieldSeq.filter(f => used.has(f)); ctx.fillStyle = C.beam; ctx.font = 'bold 11px system-ui'; ord.forEach((f, k) => { const F = fields.fields[f]; if ((F.x1 - F.x0) * s > 26) ctx.fillText(`F${k + 1}`, X(F.x0) + 4, Y(F.y1) + 13); }); }
       const dot = (i, col, r) => { ctx.beginPath(); ctx.arc(X(cx[i]), Y(cy[i]), r, 0, 2 * Math.PI); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); };
       dot(seq[0], '#16a34a', 5); ctx.fillStyle = '#16a34a'; ctx.font = 'bold 11px system-ui'; ctx.fillText('start', X(cx[seq[0]]) + 7, Y(cy[seq[0]]) - 6);
-      if (K > 0 && K < N) { const i = seq[K - 1], x = X(cx[i]), y = Y(cy[i]); ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.moveTo(x, y - 9); ctx.lineTo(x, y + 9); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI); ctx.stroke(); }
+    }
+    if ((view === 'fields' || view === 'order') && fields && fields.stitchPts && overlays.stitches) {
+      const P = fields.stitchPts; ctx.lineWidth = 2;
+      for (let k = 0; k < P.length; k += 2) { const x = X(P[k]), y = Y(P[k + 1]); if (x < -8 || y < -8 || x > size.w + 8 || y > size.h + 8) continue; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 2 * Math.PI); ctx.stroke(); ctx.strokeStyle = '#ea580c'; ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke(); }
     }
     if (view === 'sim' && sim && simImg) {
       ctx.imageSmoothingEnabled = true; ctx.drawImage(simImg.c, X(sim.x0), Y(sim.y0 + sim.ny * sim.pitch), sim.nx * sim.pitch * s, sim.ny * sim.pitch * s);
@@ -228,7 +271,38 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     // scale bar
     const target = 120 / s, p10 = 10 ** Math.floor(Math.log10(target)), nice = [1, 2, 5, 10].map(k => k * p10).filter(v => v <= target).pop() || p10;
     ctx.fillStyle = C.ink; ctx.fillRect(14, size.h - 18, nice * s, 3); ctx.font = '11px system-ui'; ctx.fillText(fmtLen(nice), 14, size.h - 23);
-  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox, orderData, playK, cutY]);
+  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox, orderData, playOn, cutY]);
+
+  // playback overlay: draws only the figures written since the last frame; the beam marker is a DOM element
+  const ovRef = useRef(null), ovState = useRef({ key: '', k: 0, pt: null }), markRef = useRef(null);
+  useEffect(() => {
+    const c = ovRef.current; if (!c) return; const dpr = window.devicePixelRatio || 1, st = ovState.current, mk = markRef.current;
+    if (!(view === 'order' && orderData && playOn)) { if (st.key) { c.width = 1; c.height = 1; st.key = ''; } if (mk) mk.style.display = 'none'; return; }
+    const { seq, N, cx, cy } = orderData, K = Math.min(N, Math.floor(playK)), t = fields.frags.t, ff = fields.fragField, ctx = c.getContext('2d');
+    const key = `${size.w}x${size.h}|${tr.x}|${tr.y}|${tr.s}|${overlays.path}|${N}`;
+    if (st.key !== key || K < st.k) { c.width = size.w * dpr; c.height = size.h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); st.key = key; st.k = 0; st.pt = null; }
+    const s = tr.s, X = x => tr.x + x * s, Y = y => tr.y - y * s, vx0 = -tr.x / s, vx1 = (size.w - tr.x) / s, vy0 = (tr.y - size.h) / s, vy1 = tr.y / s;
+    for (let a = st.k; a < K;) { // one colour bin at a time
+      const b = Math.min(ORDER_BINS - 1, Math.floor(a * ORDER_BINS / N)), e = Math.min(K, Math.floor((b + 1) * N / ORDER_BINS)) || K, col = orderCol(b);
+      ctx.fillStyle = col; ctx.beginPath(); let any = 0;
+      for (let q = a; q < Math.max(e, a + 1); q++) {
+        const o = seq[q] * 6; if (t[o + 1] < vy0 || t[o] > vy1 || Math.max(t[o + 3], t[o + 5]) < vx0 || Math.min(t[o + 2], t[o + 4]) > vx1) continue;
+        if ((Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4])) * s < 1 && (t[o + 1] - t[o]) * s < 1) { ctx.fillRect(X(cx[seq[q]]) - 0.5, Y(cy[seq[q]]) - 0.5, 1, 1); continue; }
+        ctx.moveTo(X(t[o + 2]), Y(t[o])); ctx.lineTo(X(t[o + 3]), Y(t[o])); ctx.lineTo(X(t[o + 5]), Y(t[o + 1])); ctx.lineTo(X(t[o + 4]), Y(t[o + 1])); any++;
+        if (any >= 4000) { ctx.fill(); ctx.beginPath(); any = 0; }
+      }
+      if (any) ctx.fill(); a = Math.max(e, a + 1);
+    }
+    if (overlays.path && K > st.k) {
+      const stp = Math.max(1, Math.ceil(N / 40000)); ctx.lineWidth = 0.9; ctx.beginPath(); ctx.strokeStyle = 'rgba(17,24,39,.6)';
+      const jumps = []; let pt = st.pt;
+      for (let q = st.k; q < K; q++) { const i = seq[q]; if (pt && ff[i] !== pt[2]) jumps.push([pt[0], pt[1], cx[i], cy[i]]); if (q % stp && q !== K - 1 && !(pt && ff[i] !== pt[2])) continue; const x = X(cx[i]), y = Y(cy[i]); if (pt && ff[i] === pt[2]) { ctx.moveTo(X(pt[0]), Y(pt[1])); ctx.lineTo(x, y); } pt = [cx[i], cy[i], ff[i]]; }
+      ctx.stroke(); st.pt = pt;
+      if (jumps.length) { ctx.strokeStyle = 'rgba(194,65,12,.9)'; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath(); for (const [a, b2, c2, d] of jumps) { ctx.moveTo(X(a), Y(b2)); ctx.lineTo(X(c2), Y(d)); } ctx.stroke(); ctx.setLineDash([]); }
+    }
+    st.k = K;
+    if (mk) { if (K > 0 && K < N) { const i = seq[K - 1]; mk.style.display = 'block'; mk.style.transform = `translate(${X(cx[i]) - 10}px, ${Y(cy[i]) - 10}px)`; } else mk.style.display = 'none'; }
+  }, [playK, playOn, tr, size, view, orderData, fields, overlays.path]);
 
   const toNm = e => { const r = cv.current.getBoundingClientRect(); return [(e.clientX - r.left - tr.x) / tr.s, (tr.y - (e.clientY - r.top)) / tr.s]; };
   const onDown = e => { const [x, y] = toNm(e); drag.current = { sx: e.clientX, sy: e.clientY, tx: tr.x, ty: tr.y, box: e.shiftKey ? [x, y] : null }; };
@@ -244,6 +318,8 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
   const onWheel = e => { const r = cv.current.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, k = e.deltaY < 0 ? 1.25 : 0.8; setTr(t => ({ s: t.s * k, x: mx - (mx - t.x) * k, y: my - (my - t.y) * k })); };
   useEffect(() => { const c = cv.current; const h = e => e.preventDefault(); c.addEventListener('wheel', h, { passive: false }); return () => c.removeEventListener('wheel', h); }, []);
   return <div ref={wrap} style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+    <canvas ref={ovRef} style={{ position: 'absolute', left: 0, top: 0, width: size.w, height: size.h, pointerEvents: 'none' }} />
+    <svg ref={markRef} width={20} height={20} style={{ position: 'absolute', left: 0, top: 0, display: 'none', pointerEvents: 'none' }}><circle cx={10} cy={10} r={5} fill="none" stroke="#dc2626" strokeWidth={2} /><path d="M1 10H19M10 1V19" stroke="#dc2626" strokeWidth={2} /></svg>
     <canvas ref={cv} style={{ width: size.w, height: size.h, display: 'block', cursor: drag.current ? 'grabbing' : 'crosshair' }} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; setHover(null); }} onWheel={onWheel} onDoubleClick={fit} />
     <div style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 11, color: C.ink, background: 'rgba(255,255,255,.9)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '4px 8px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' }}>
       {hover ? <>x {fmtLen(hover.x)} · y {fmtLen(hover.y)}{hover.cls != null && <> · class {hover.cls} · dose ×{hover.cd.toFixed(3)} <span style={{ color: C.mute }}>(exact ×{hover.dose.toFixed(3)})</span></>}{hover.rank != null && <> · written <b>#{hover.rank + 1}</b> of {orderData.N}</>}{hover.field != null && <> · field {hover.field}</>}{hover.E != null && <> · E {hover.E.toFixed(3)}</>}</> : 'drag to pan · wheel to zoom · double-click to fit · shift-drag = simulation box'}
@@ -259,7 +335,7 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       <div style={{ color: C.mute, marginBottom: 3 }}>writing order</div>
       <div style={{ width: 160, height: 10, background: `linear-gradient(90deg, ${[0.06, .3, .5, .7, .94].map(t => rgb(turbo(t))).join(',')})`, borderRadius: 2 }} />
       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>first</span><span>last</span></div>
-      <div style={{ marginTop: 3 }}><span style={{ color: '#16a34a', fontWeight: 700 }}>●</span> start {overlays.path && <><span style={{ marginLeft: 6 }}>─</span> beam path <span style={{ color: C.beam, marginLeft: 6 }}>┅</span> stage move</>}</div>
+      <div style={{ marginTop: 3 }}><span style={{ color: '#16a34a', fontWeight: 700 }}>●</span> start {overlays.path && <><span style={{ marginLeft: 6 }}>─</span> beam path <span style={{ color: C.beam, marginLeft: 6 }}>┅</span> stage move</>}{fields && fields.stitchPts && overlays.stitches && <><span style={{ color: '#ea580c', fontWeight: 700, marginLeft: 6 }}>✕</span> stitch</>}</div>
     </div>}
     {(view === 'dose' || view === 'fields') && pec && <div style={{ position: 'absolute', left: 10, bottom: 34, background: 'rgba(255,255,255,.92)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '5px 8px', fontSize: 11 }}>
       <div style={{ color: C.mute, marginBottom: 3 }}>relative dose</div>
@@ -299,7 +375,7 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes',
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes', placement: 'auto',
   simPitch: 0, simThr: 0.5, simCompare: true,
   expMode: 'datatype', layerKeep: true, layerOut: 1, layerBase: 100, cellPerField: false, baseDose: 300, current: 1, bss: 10, minDwell: 20, fileName: 'softebeam',
 };
@@ -319,7 +395,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   const [status, setStatus] = useState('Open a GDS/OASIS file or send a layout from the editor.');
   const [err, setErr] = useState({});
   const [view, setView] = useState('layout');
-  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true });
+  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true, stitches: true });
   const [simBox, setSimBox] = useState(null);
   const [viewWin, setViewWin] = useState(null);
   const [cutFrac, setCutFrac] = useState(0.5);
@@ -406,9 +482,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         setRes(x => ({ import: x.import, fracture: x.fracture, pec: r })); setView('dose');
         setStatus(r.corrected ? `PEC: ${fmtN(r.nFrags)} figures, ${fmtN(r.nGroups)} dose groups, ${r.nClasses} classes; converged to ${pct(r.maxErr)} in ${r.iters} iterations.` : `Dose 1.0 assigned to ${fmtN(r.nFrags)} figures (PEC off).`);
       } else if (st === 'fields') {
-        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder });
+        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement }, m => setProg({ label: m.label, p: null }));
         setRes(x => ({ ...x, fields: r })); setView('order');
-        setStatus(`${P.fieldsOn ? `${r.NX}×${r.NY} fields of ${P.fieldUm} µm, ` : ''}${fmtN(r.n)} figures; beam travel ${fmtLen(r.travel)}. Press ▶ in the viewer to watch the writing order.`);
+        setStatus(`${P.fieldsOn ? `${r.placementUsed}: ${r.nFields} fields of ${P.fieldUm} µm, ${r.stitches} stitches, ` : ''}${fmtN(r.n)} figures. Press ▶ in the viewer to watch the writing order.`);
       }
       setDone({ ...doneRef.current, [st]: true });
       setStatus(s => `${s}  (${((performance.now() - t0) / 1000).toFixed(2)} s)`);
@@ -504,7 +580,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'fracture': return r.fracture ? `${fmtN(r.fracture.n)} trapezoids` : P.fracMode === 'rect' ? 'rectangles' : 'trapezoids';
       case 'psf': return psfSummary ? `${P.psfMode === 'preset' ? (PSF_PRESETS.find(x => x.id === P.presetId) || {}).label : P.psfMode === 'manual' ? 'manual α/β/η' : (psfData && psfData.label) || ''}` : 'not defined';
       case 'pec': return r.pec ? (r.pec.corrected ? `${r.pec.nClasses} classes · ×${r.pec.classDose[1].toFixed(2)}–×${r.pec.classDose[r.pec.nClasses].toFixed(2)}` : 'uniform dose') : P.pecOn ? `edge eq. ${Math.round(P.mix * 100)}% · ${P.classMode === 'accuracy' ? `${(P.acc * 100).toFixed(1)}% steps` : `${P.nClasses} classes`}` : 'off (dose 1.0)';
-      case 'fields': return `${P.fieldsOn ? (r.fields ? `${r.fields.NX}×${r.fields.NY} × ${P.fieldUm} µm` : `${P.fieldUm} µm fields`) : 'no field split'} · ${(FIG_ORDERS.find(o => o[0] === P.figOrder) || [, ''])[1].split(' (')[0].toLowerCase()}`;
+      case 'fields': return `${P.fieldsOn ? (r.fields ? `${r.fields.nFields} × ${P.fieldUm} µm · ${r.fields.stitches} stitches` : `${P.fieldUm} µm · ${P.placement === 'auto' ? 'auto placement' : 'fields'}`) : 'no field split'} · ${(FIG_ORDERS.find(o => o[0] === P.figOrder) || [, ''])[1].split(' (')[0].toLowerCase()}`;
       case 'sim': return r.sim ? `${r.sim.nx}×${r.sim.ny} px` : 'threshold model';
       case 'export': return { datatype: 'GDS · datatype = class', layer: 'GDS · layer per class', raith: 'GDS · Raith (DT = 1000·DF)' }[P.expMode];
       default: return '';
@@ -641,16 +717,20 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'fields': return <>
         <Chk label="Split into write fields" checked={P.fieldsOn} onChange={v => set('fields', 'fieldsOn', v)} />
         {P.fieldsOn && <><Num label="Field size" unit="µm" value={P.fieldUm} onChange={v => set('fields', 'fieldUm', v)} />
-          <Sel label="Placement" value={P.origin} onChange={v => set('fields', 'origin', v)} options={[['bbox', 'Start at pattern corner'], ['center', 'Centred on pattern'], ['origin', 'Grid through (0,0)']]} /></>}
+          <Sel label="Field placement" value={P.placement} onChange={v => set('fields', 'placement', v)} w={190} options={[['auto', 'Automatic (best of all)'], ['followEnd', 'Follow geometry, from one end'], ['followCenter', 'Follow geometry, centre first'], ['gridOpt', 'Fixed grid, optimised offset'], ['grid', 'Fixed grid']]} />
+          {P.placement === 'grid' && <Sel label="Grid origin" value={P.origin} onChange={v => set('fields', 'origin', v)} options={[['bbox', 'Start at pattern corner'], ['center', 'Centred on pattern'], ['origin', 'Grid through (0,0)']]} />}</>}
         <Sec title="Writing order">
           <Sel label="Start corner" value={P.start} onChange={v => set('fields', 'start', v)} options={[['tl', 'Top-left (top → bottom)'], ['bl', 'Bottom-left (bottom → top)'], ['tr', 'Top-right'], ['br', 'Bottom-right']]} w={180} />
-          {P.fieldsOn && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
+          {P.fieldsOn && (P.placement === 'grid' || P.placement === 'gridOpt') && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
           <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
-          <div style={{ display: 'flex', gap: 10 }}><Chk label="beam path" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
+          <div style={{ display: 'flex', gap: 10 }}><Chk label="beam path" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} /><Chk label="stitches" checked={overlays.stitches} onChange={v => setOverlays(o => ({ ...o, stitches: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
         </Sec>
         {res.fields && <Sec title="Result">
-          {res.fields.fieldsOn && <KV k="Fields" v={`${res.fields.NX} × ${res.fields.NY} (${new Set(res.fields.fragField).size} used)`} />}
-          <KV k="Figures" v={fmtN(res.fields.n)} /><KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} /><KV k="Longest jump inside a field" v={fmtLen(res.fields.jumpMax)} />{res.fields.fieldsOn && <KV k="Stage moves between fields" v={res.fields.fieldJumps} />}
+          {res.fields.fieldsOn && <><KV k="Placement" v={res.fields.placementUsed} /><KV k="Fields used" v={res.fields.nFields} />
+            <KV k="Stitches (pattern cut by a field edge)" v={res.fields.stitches} tone={C.beam} /><KV k="Stitched length" v={fmtLen(res.fields.cutLen)} /><KV k="Stage travel" v={fmtLen(res.fields.stageTravel)} /></>}
+          <KV k="Figures" v={fmtN(res.fields.n)} /><KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
+          {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>fields</th><th>travel</th></tr></thead>
+            <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.fields}</td><td>{fmtLen(c.travel)}</td></tr>)}</tbody></table>}
           <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>
         </Sec>}
         <Note>The viewer's <b>Write order</b> tab colours figures from first (blue) to last (red) and can play the exposure. Export writes the GDS in this order. PEC runs on the whole pattern before field splitting, so backscatter from neighbouring fields is included. Some tools re-sort figures themselves.</Note>

@@ -149,8 +149,23 @@ export function runPEC(F, psf, opts = {}, onProgress = () => {}) {
     let Wb = 0, Wf = 0; for (const t of psf.terms) (bs(t) ? (Wb += t.w) : (Wf += t.w)); eta = Wb / Math.max(1e-12, Wf);
     Pd = new Float64Array(nGroups); const ones = new Float64Array(nGroups).fill(1);
     for (const t of psf.terms) if (bs(t)) { const G = new TermGrid(bbox, t.s, maxCells); G.splat(frags, fragGroup, ones); G.convolve(); for (let g = 0; g < nGroups; g++) Pd[g] += t.w / Wb * G.sample(ctrl[2 * g], ctrl[2 * g + 1]); }
+    // forward coverage f at each control point (analytic short-range part at unit dose): ½ on a straight edge,
+    // 1 deep inside. Interior points use their real f, so thin pieces just inside a shallow outline don't get a
+    // full-interior target that would fight the edge next to them. Edge points use ½ — except where the point sits in
+    // a concave spot of its OWN shape (inner corner, grid-snapping notch), where ½ is unreachable; there the shape's
+    // own coverage is used. Gaps to other shapes still count as ½, so narrow spaces stay corrected.
+    let Ws = 0; for (const t of plan.short) Ws += t.w;
+    const gc = F.groupComp;
     target = new Float64Array(nGroups); const m = opts.mix;
-    for (let g = 0; g < nGroups; g++) { const P = Math.min(1, Pd[g]), den = 1 + eta * (1 + m) * P; target[g] = F.kind[g] ? (0.5 + eta * P) / den : (1 + eta * P) / den; }
+    for (let g = 0; g < nGroups; g++) {
+      const P = Math.min(1, Pd[g]), den = 1 + eta * (1 + m) * P;
+      let f = F.kind[g] ? 0.5 : 1;
+      if (Ws > 0) {
+        let r = 0, rs = 0; for (let k = K.rowPtr[g]; k < K.rowPtr[g + 1]; k++) { r += K.val[k]; if (gc && gc[K.col[k]] === gc[g]) rs += K.val[k]; }
+        f = F.kind[g] ? Math.min(1, Math.max(0.5, gc ? rs / Ws : 0.5)) : Math.min(1, Math.max(0.5, r / Ws));
+      }
+      target[g] = (f + eta * P) / den;
+    }
   }
   const evalE = dose => {
     for (let g = 0; g < nGroups; g++) { let s = 0; for (let k = K.rowPtr[g]; k < K.rowPtr[g + 1]; k++) s += K.val[k] * dose[K.col[k]]; E[g] = s; }

@@ -17,7 +17,7 @@ layout), or directly at `/?ebeam=1`.
 | Heal & Fracture | Union of overlapping shapes, cut into non-overlapping trapezoids (or staircase rectangles). |
 | PSF | Literature preset, manual α/β/η(/γ/ν), an in-browser Monte Carlo run, or an imported `.lpsf`/text PSF. A beam + process blur (FWHM) is added in quadrature. |
 | PEC | Fragments figures (edge strips + interior pieces, small shapes kept whole), solves doses, quantises to dose classes. |
-| Fields & Order | Splits figures at write-field boundaries and sets the writing order: start corner, field traversal (meander/raster rows or columns, spiral from the centre) and figure order inside a field (shape by shape, raster, meander, shortest path, centre-out, outside-in, by dose). The **Write order** view colours figures first → last, draws the beam path and stage moves, and can play the exposure. Export writes the GDS in this order. PEC is computed on the whole pattern first. |
+| Fields & Order | **Automatic field placement** scores four strategies — fixed grid, fixed grid with optimised offset, follow geometry from one end, follow geometry centre first — by stitches (places where a field edge cuts the pattern), stitched length, field count and stage travel, and keeps the best; stitches are straightened to one clean cut across the structure and marked in the viewer. Then splits figures at write-field boundaries and sets the writing order: start corner, field traversal (meander/raster rows or columns, spiral from the centre) and figure order inside a field (shape by shape, raster, meander, shortest path, centre-out, outside-in, by dose). The **Write order** view colours figures first → last, draws the beam path and stage moves, and can play the exposure. Export writes the GDS in this order. PEC is computed on the whole pattern first. |
 | Simulate | Exposes the corrected pattern with the PSF and draws the developed edge (threshold model), optionally next to the uniform-dose result. A movable cross-section plots the energy profile and reports drawn vs developed widths with and without PEC. |
 | Export | GDSII with the dose class in the datatype, one layer per class, or the Raith convention (datatype = round(1000 × dose factor)); a dose table; dwell and beam-on time estimates. |
 
@@ -58,6 +58,8 @@ Run the engine tests with Node 22+: `node src/softebeam/test/<name>.test.mjs` fo
 | Monte Carlo PSF vs reference TRACER PSF (PMMA 100 nm / Si, 50 kV) | enclosed energy within 1.5 % from 5 nm outward; β 6.45 vs 6.65 µm |
 | PEC on a 100 nm isolated line + 1:1 grating + 20 µm pad (β = 10 µm, η = 0.7) | simulated CD 99.6–100.3 nm after PEC (81–86 nm at uniform dose); pad edge within 0.3 nm |
 | Dose classes, 1 % ladder | residual energy error ≈ 1 % |
+| Field placement on a 30 mm-long spiral line (training file, 500 µm fields) | 35 stitches with follow geometry vs 71 (fixed grid) / 68 (optimised grid); stitched length 144 vs 219 µm; whole flow 4.6 s in the browser |
+| PEC on 221 k figures from 1023-vertex curved shapes | converges to 0.97 % max energy error |
 | End-to-end browser run (open → flow → Monte Carlo → simulate → export → editor hand-off) | no console errors |
 
 ## Limitations

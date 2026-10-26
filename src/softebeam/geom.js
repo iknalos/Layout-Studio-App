@@ -179,7 +179,7 @@ export function biasRing(r, d) {
 // ── union + trapezoid decomposition (slab sweep, positive winding) ──
 // Rings must be CCW. Emits merged trapezoids into buf with the given layer; returns number emitted.
 // compBase: component ids are compBase + local union-find root index.
-function sweepCluster(rings, buf, layer, uf, eps) {
+function sweepCluster(rings, buf, layer, uf, eps, tol) {
   let ne = 0; for (const r of rings) ne += r.length / 2;
   const ylo = new Float64Array(ne), yhi = new Float64Array(ne), xlo = new Float64Array(ne), xhi = new Float64Array(ne), w = new Int8Array(ne);
   let k = 0; const ys = [];
@@ -200,9 +200,23 @@ function sweepCluster(rings, buf, layer, uf, eps) {
   order.sort((a, b) => ylo[a] - ylo[b]);
   const xAt = (e, y) => yhi[e] === ylo[e] ? xlo[e] : xlo[e] + (xhi[e] - xlo[e]) * (y - ylo[e]) / (yhi[e] - ylo[e]);
   let active = [], ei = 0; const XA = new Float64Array(ne), XB = new Float64Array(ne);
-  // open trapezoids touching the current y from below: {id, xl, xr, sl, sr}
+  // open trapezoids touching the current y from below: {id, xl, xr, sl, sr (side slopes of the merged figure), J (junctions)}
   let open = [];
   const slope = (a, b, h) => (b - a) / h;
+  const same = (a, b) => Math.abs(a - b) <= 1e-9 * (1 + Math.abs(b));
+  // Can the new slab piece t continue open figure o? Exactly collinear sides always merge. With a fracture tolerance,
+  // nearly collinear ones merge too if every earlier junction stays within tol of the straightened sides (curves on a
+  // fine grid otherwise explode into one-grid-step slivers).
+  const canMerge = (o, t, y0, y1) => {
+    if (Math.abs(o.xl - t.xl0) > eps || Math.abs(o.xr - t.xr0) > eps) return 0;
+    if (same(o.sl, t.sl) && same(o.sr, t.sr)) return 1;
+    if (!(tol > 0) || o.J.length >= 512) return 0;
+    const b = o.id * 6, Y0 = buf.t[b], XL0 = buf.t[b + 2], XR0 = buf.t[b + 3], H = y1 - Y0;
+    const chk = (y, xl, xr) => { const f = (y - Y0) / H; return Math.abs(XL0 + (t.xl1 - XL0) * f - xl) <= tol && Math.abs(XR0 + (t.xr1 - XR0) * f - xr) <= tol; };
+    if (!chk(y0, t.xl0, t.xr0)) return 0;
+    for (const j of o.J) if (!chk(j[0], j[1], j[2])) return 0;
+    return 2;
+  };
   const emitSlab = (y0, y1, A) => {
     // A sorted by x at y0 (ties: x at y1, then left sides first)
     const h = y1 - y0, nxt = []; let wind = 0, left = -1;
@@ -224,8 +238,10 @@ function sweepCluster(rings, buf, layer, uf, eps) {
         const o = open[q];
         const ov = Math.min(o.xr, t.xr0) - Math.max(o.xl, t.xl0);
         if (ov > eps) {
-          if (id < 0 && Math.abs(o.xl - t.xl0) <= eps && Math.abs(o.xr - t.xr0) <= eps && Math.abs(o.sl - t.sl) <= 1e-9 * (1 + Math.abs(t.sl)) && Math.abs(o.sr - t.sr) <= 1e-9 * (1 + Math.abs(t.sr))) {
+          const m = id < 0 ? canMerge(o, t, y0, y1) : 0;
+          if (m) {
             id = o.id; const b = id * 6; buf.t[b + 1] = y1; buf.t[b + 4] = t.xl1; buf.t[b + 5] = t.xr1;
+            t.J = m === 2 ? o.J.concat([[y0, t.xl0, t.xr0]]) : o.J; t.sl = (t.xl1 - buf.t[b + 2]) / (y1 - buf.t[b]); t.sr = (t.xr1 - buf.t[b + 3]) / (y1 - buf.t[b]);
           }
           t.link = t.link || []; t.link.push(o.id);
         }
@@ -233,7 +249,7 @@ function sweepCluster(rings, buf, layer, uf, eps) {
       }
       if (id < 0) id = buf.push(y0, y1, t.xl0, t.xr0, t.xl1, t.xr1, layer, 0);
       uf.make(id); if (t.link) for (const l of t.link) uf.union(id, l);
-      merged.push({ id, xl: t.xl1, xr: t.xr1, sl: t.sl, sr: t.sr });
+      merged.push({ id, xl: t.xl1, xr: t.xr1, sl: t.sl, sr: t.sr, J: t.J || [] });
     }
     open = merged;
   };
@@ -301,7 +317,8 @@ const isAxisRect = r => r.length === 8 && ((r[1] === r[3] && r[2] === r[4] && r[
 
 // Heal (union per layer) + fracture to trapezoids. Returns {traps (TrapBuf trimmed), comps, compSrc}
 // compSrc[c] = index of the single source ring if the component came from exactly one ring, else -1
-export function healAndFracture(rings, ringLayer, eps = 1e-6) {
+// tol: fracture tolerance (nm) — max deviation allowed when straightening nearly collinear slab sides
+export function healAndFracture(rings, ringLayer, eps = 1e-6, tol = 0.5) {
   const buf = new TrapBuf(Math.max(1024, rings.length * 4));
   const byLayer = new Map();
   rings.forEach((r, i) => { const l = ringLayer[i]; let L = byLayer.get(l); if (!L) byLayer.set(l, L = []); L.push(i); });
@@ -315,7 +332,7 @@ export function healAndFracture(rings, ringLayer, eps = 1e-6) {
         const t = buf.push(y0, y1, x0, x1, x0, x1, layer, 0); compOfTrap[t] = compSrc.length; compSrc.push(ids[0]); continue;
       }
       const uf = new UF(), start = buf.n;
-      sweepCluster(ids.map(i => rings[i]), buf, layer, uf, eps);
+      sweepCluster(ids.map(i => rings[i]), buf, layer, uf, eps, tol);
       const rootComp = new Map();
       for (let t = start; t < buf.n; t++) {
         const r = uf.find(t); let c = rootComp.get(r);
@@ -375,6 +392,12 @@ export function fragmentForPEC(traps, nComp, opts) {
     for (const [s, e] of segs) { const s2 = Math.max(s, cur); if (e > s2) { cov += e - s2; cur = e; } }
     return (b - a) - cov;
   };
+  const longestGap = (ints, a, b) => { // longest sub-interval of [a,b] not covered by ints → [length, midpoint]
+    const segs = []; if (ints) for (let i = 0; i < ints.length; i += 2) { const s = Math.max(a, ints[i]), e = Math.min(b, ints[i + 1]); if (e > s) segs.push([s, e]); }
+    segs.sort((p, q) => p[0] - q[0]); let cur = a, best = [0, (a + b) / 2];
+    for (const [s, e] of segs) { if (s - cur > best[0]) best = [s - cur, (s + cur) / 2]; cur = Math.max(cur, e); }
+    if (b - cur > best[0]) best = [b - cur, (b + cur) / 2]; return best;
+  };
   const out = new TrapBuf(n * 4); const fragGroup = []; const ctrl = []; const target = []; const groupComp = []; const kind = [];
   const compGroup = new Int32Array(nComp).fill(-1);
   const bestSide = new Float64Array(nComp); // for small comps: widest slab
@@ -416,8 +439,8 @@ export function fragmentForPEC(traps, nComp, opts) {
         const sides = [];
         if (q === 0) sides.push([Math.hypot(fl1 - fl0, ry1 - ry0), 0.5 * (fl0 + fl1), 0.5 * (ry0 + ry1)]);
         if (q === tc.length - 2) sides.push([Math.hypot(fr1 - fr0, ry1 - ry0), 0.5 * (fr0 + fr1), 0.5 * (ry0 + ry1)]);
-        if (rowBotOut) { const len = fr0 - fl0; if (uncovered(tops.get(key(l, y0)), fl0, fr0) > 0.5 * len) sides.push([len, 0.5 * (fl0 + fr0), ry0]); }
-        if (rowTopOut) { const len = fr1 - fl1; if (uncovered(bots.get(key(l, y1)), fl1, fr1) > 0.5 * len) sides.push([len, 0.5 * (fl1 + fr1), ry1]); }
+        if (rowBotOut) { const g = longestGap(tops.get(key(l, y0)), fl0, fr0); if (g[0] > 0.25 * (fr0 - fl0) && g[0] > edgeW * 0.25) sides.push([g[0], g[1], ry0]); }
+        if (rowTopOut) { const g = longestGap(bots.get(key(l, y1)), fl1, fr1); if (g[0] > 0.25 * (fr1 - fl1) && g[0] > edgeW * 0.25) sides.push([g[0], g[1], ry1]); }
         if (sides.length) { sides.sort((p, s) => s[0] - p[0]); ctrl.push(sides[0][1], sides[0][2]); target.push(edgeTarget); kind.push(1); }
         else { const a = trapArea(out.t, (out.n - 1) * 6), cx = trapCentroid(out.t, (out.n - 1) * 6, a); ctrl.push(cx[0], cx[1]); target.push(interiorTarget); kind.push(0); }
       }
@@ -511,7 +534,7 @@ export function fieldSequence(NX, NY, traversal = 'meanderX', start = 'bl') {
 
 // Figure order inside every field, fields visited in fieldSeq.
 // figOrder: 'shapes' (follow geometry), 'raster' | 'meander' (rows of height `band`), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
-export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null } = {}) {
+export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null, dist = null } = {}) {
   const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n); let hs = 0;
   for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); hs += t[o + 1] - t[o]; }
   const B = band > 0 ? band : Math.max(1, hs / Math.max(1, n)); // default row height = mean figure height
@@ -528,7 +551,7 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
     else if (figOrder === 'shapes') { // follow geometry: finish one shape before the next; shapes in rows by their lower edge
       const cb = new Map(); for (const i of idx) { const c = frags.comp[i]; let q = cb.get(c); if (!q) cb.set(c, q = [Infinity, Infinity, -Infinity]); q[0] = Math.min(q[0], sx * cx[i]); q[1] = Math.min(q[1], sy * cy[i]); q[2] = Math.max(q[2], sy * cy[i]); }
       const hs = [...cb.values()].map(q => q[2] - q[1]).sort((u, v) => u - v), Bc = Math.max(B, hs[Math.floor(hs.length / 2)] || B);
-      idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb); return (Math.floor(A[1] / Bc) - Math.floor(Q[1] / Bc)) || (A[0] - Q[0]) || (ca - cbb); } return (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
+      idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb); return (Math.floor(A[1] / Bc) - Math.floor(Q[1] / Bc)) || (A[0] - Q[0]) || (ca - cbb); } return dist ? (dist[a] - dist[b]) || (row(a) - row(b)) : (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
     }
     else if (figOrder === 'dose' && dose) idx.sort((a, b) => (dose[a] - dose[b]) || (row(a) - row(b)) || sx * (cx[a] - cx[b]));
     else if (figOrder === 'nearest' && idx.length > 2) { nearestPath(idx, cx, cy, sx < 0 ? F.x1 : F.x0, sy < 0 ? F.y1 : F.y0); }
@@ -562,6 +585,243 @@ function nearestPath(idx, cx, cy, x0, y0) {
     out.push(best); px = cx[best]; py = cy[best];
   }
   for (let k = 0; k < n; k++) idx[k] = out[k];
+}
+
+// ── figure adjacency, follow-geometry fields, stitch metrics ──
+// Figures are adjacent when they share an edge: a top/bottom at the same y (overlapping in x), or an identical side.
+export function fragmentAdjacency(frags) {
+  const n = frags.n, t = frags.t, A = [], B = [], L = [];
+  const tops = new Map(), bots = new Map(), sides = new Map(), r = v => Math.round(v * 1000);
+  for (let i = 0; i < n; i++) {
+    const o = i * 6, l = frags.layer[i];
+    let a = tops.get(l + ':' + t[o + 1]); if (!a) tops.set(l + ':' + t[o + 1], a = []); a.push(t[o + 4], t[o + 5], i);
+    let b = bots.get(l + ':' + t[o]); if (!b) bots.set(l + ':' + t[o], b = []); b.push(t[o + 2], t[o + 3], i);
+    sides.set(`${l}|${r(t[o + 3])},${r(t[o])},${r(t[o + 5])},${r(t[o + 1])}`, i); // right side, matched by a left side below
+  }
+  for (const [k, T] of tops) {
+    const Bt = bots.get(k); if (!Bt) continue;
+    const ta = [], ba = []; for (let q = 0; q < T.length; q += 3) ta.push(q); for (let q = 0; q < Bt.length; q += 3) ba.push(q);
+    ta.sort((p, q) => T[p] - T[q]); ba.sort((p, q) => Bt[p] - Bt[q]);
+    let j = 0;
+    for (const p of ta) {
+      while (j < ba.length && Bt[ba[j] + 1] <= T[p] + 1e-9) j++;
+      for (let q = j; q < ba.length && Bt[ba[q]] < T[p + 1] - 1e-9; q++) { const ov = Math.min(T[p + 1], Bt[ba[q] + 1]) - Math.max(T[p], Bt[ba[q]]); if (ov > 1e-9) { A.push(T[p + 2]); B.push(Bt[ba[q] + 2]); L.push(ov); } }
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const o = i * 6, j = sides.get(`${frags.layer[i]}|${r(t[o + 2])},${r(t[o])},${r(t[o + 4])},${r(t[o + 1])}`);
+    if (j !== undefined && j !== i) { A.push(i); B.push(j); L.push(Math.hypot(t[o + 4] - t[o + 2], t[o + 1] - t[o])); }
+  }
+  const deg = new Int32Array(n + 1); for (let k = 0; k < A.length; k++) { deg[A[k] + 1]++; deg[B[k] + 1]++; }
+  for (let i = 0; i < n; i++) deg[i + 1] += deg[i];
+  const nb = new Int32Array(deg[n]), w = new Float64Array(deg[n]), fill = deg.slice(0, n);
+  for (let k = 0; k < A.length; k++) { nb[fill[A[k]]] = B[k]; w[fill[A[k]]++] = L[k]; nb[fill[B[k]]] = A[k]; w[fill[B[k]]++] = L[k]; }
+  return { start: deg, nb, w, n };
+}
+
+function bfsFrom(adj, seeds, dist, queue) { // multi-source BFS; dist must be pre-filled with -1; returns visited count
+  let h = 0, tl = 0;
+  for (const s of seeds) { if (dist[s] < 0) { dist[s] = 0; queue[tl++] = s; } }
+  while (h < tl) { const v = queue[h++]; for (let k = adj.start[v]; k < adj.start[v + 1]; k++) { const u = adj.nb[k]; if (dist[u] < 0) { dist[u] = dist[v] + 1; queue[tl++] = u; } } }
+  return tl;
+}
+
+// One seed per connected structure: 'center' = middle of its longest path (graph diameter), 'end' = one end of it
+export function structureSeeds(frags, adj, mode = 'center') {
+  const n = frags.n, dist = new Int32Array(n).fill(-1), q = new Int32Array(n), seeds = [], t = frags.t;
+  const d2 = new Int32Array(n).fill(-1), q2 = new Int32Array(n);
+  for (let s0 = 0; s0 < n; s0++) {
+    if (dist[s0] >= 0) continue;
+    const cnt = bfsFrom(adj, [s0], dist, q); let a = s0; for (let k = 0; k < cnt; k++) if (dist[q[k]] > dist[a]) a = q[k];
+    const cnt2 = bfsFrom(adj, [a], d2, q2); let b = a; for (let k = 0; k < cnt2; k++) if (d2[q2[k]] > d2[b]) b = q2[k];
+    let seed;
+    if (mode === 'end') { const tl = i => -t[i * 6 + 2] + t[i * 6 + 1]; seed = tl(a) >= tl(b) ? a : b; } // the more top-left end
+    else { let v = b; const target = Math.floor(d2[b] / 2); while (d2[v] > target) { for (let k = adj.start[v]; k < adj.start[v + 1]; k++) { const u = adj.nb[k]; if (d2[u] === d2[v] - 1) { v = u; break; } } } seed = v; }
+    seeds.push(seed);
+  }
+  return seeds;
+}
+
+// Greedy field cover in geodesic order: walk each structure outward from its seed and keep adding figures to the
+// field of an adjacent, already-placed figure while everything still fits in one field; otherwise open a new field.
+// Fields float (placed on their content), so the structure is only cut where a field is full.
+// Dijkstra over figure centres: real distance along the structure (hop counts are anisotropic when slivers are thin)
+export function geoDistance(frags, adj, seeds) {
+  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n), d = new Float64Array(n).fill(Infinity);
+  for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); }
+  const hk = [], hv = []; // binary heap
+  const push = (k, v) => { hk.push(k); hv.push(v); let i = hk.length - 1; while (i) { const p = (i - 1) >> 1; if (hk[p] <= hk[i]) break; [hk[p], hk[i]] = [hk[i], hk[p]]; [hv[p], hv[i]] = [hv[i], hv[p]]; i = p; } };
+  const pop = () => { const k = hk[0], v = hv[0], lk = hk.pop(), lv = hv.pop(); if (hk.length) { hk[0] = lk; hv[0] = lv; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hk.length && hk[l] < hk[m]) m = l; if (r < hk.length && hk[r] < hk[m]) m = r; if (m === i) break; [hk[m], hk[i]] = [hk[i], hk[m]]; [hv[m], hv[i]] = [hv[i], hv[m]]; i = m; } } return [k, v]; };
+  for (const s of seeds) { d[s] = 0; push(0, s); }
+  while (hk.length) { const [k, v] = pop(); if (k > d[v]) continue; for (let e = adj.start[v]; e < adj.start[v + 1]; e++) { const u = adj.nb[e], nd = k + Math.hypot(cx[u] - cx[v], cy[u] - cy[v]); if (nd < d[u]) { d[u] = nd; push(nd, u); } } }
+  return d;
+}
+
+export function followGeometryFields(frags, adj, { size, start = 'center', margin = 0.002, merge = true } = {}) {
+  const n = frags.n, t = frags.t, lim = size * (1 - margin);
+  const seeds = structureSeeds(frags, adj, start), dist = geoDistance(frags, adj, seeds);
+  const seedOf = new Int32Array(n).fill(-1); { const sd = new Int32Array(n).fill(-1), qq = new Int32Array(n); seeds.forEach((s, k) => { const c = bfsFrom(adj, [s], sd, qq); for (let m = 0; m < c; m++) seedOf[qq[m]] = k; }); }
+  const sRank = seeds.map((s, k) => [k, Math.floor(-t[s * 6 + 1] / Math.max(1, size)) * 1e9 + t[s * 6 + 2]]).sort((a, b) => a[1] - b[1]); const rank = new Int32Array(seeds.length); sRank.forEach(([k], r) => { rank[k] = r; });
+  const order = Int32Array.from({ length: n }, (_, i) => i).sort((a, b) => (rank[seedOf[a]] - rank[seedOf[b]]) || (dist[a] - dist[b]));
+  const fragField = new Int32Array(n).fill(-1), fb = []; // field bbox [x0,y0,x1,y1]
+  const fits = (f, x0, y0, x1, y1) => Math.max(fb[f][2], x1) - Math.min(fb[f][0], x0) <= lim && Math.max(fb[f][3], y1) - Math.min(fb[f][1], y0) <= lim;
+  const add = (f, x0, y0, x1, y1) => { const b = fb[f]; b[0] = Math.min(b[0], x0); b[1] = Math.min(b[1], y0); b[2] = Math.max(b[2], x1); b[3] = Math.max(b[3], y1); };
+  // A field closes as soon as a figure at its growing front no longer fits: figures arrive in distance order, so the
+  // cut is then an iso-distance line straight across the structure instead of a ragged run along it.
+  const closed = [];
+  for (const i of order) {
+    const o = i * 6, x0 = Math.min(t[o + 2], t[o + 4]), x1 = Math.max(t[o + 3], t[o + 5]), y0 = t[o], y1 = t[o + 1];
+    let best = -1, touched = false;
+    for (let k = adj.start[i]; k < adj.start[i + 1]; k++) {
+      const f = fragField[adj.nb[k]]; if (f < 0 || closed[f]) continue; touched = true;
+      if (fits(f, x0, y0, x1, y1)) { if (f > best) best = f; } else closed[f] = true;
+    }
+    if (best >= 0 && closed[best]) best = -1;
+    if (best < 0 && !touched) for (let f = fb.length - 1; f >= Math.max(0, fb.length - 6); f--) if (!closed[f] && fits(f, x0, y0, x1, y1)) { best = f; break; } // pack small separate pieces
+    if (best < 0) { best = fb.length; fb.push([x0, y0, x1, y1]); closed.push(false); } else add(best, x0, y0, x1, y1);
+    fragField[i] = best;
+  }
+  // merge pass: fold whole fields together whenever their contents fit in one field (removes fields, and the stitch
+  // between them when they were neighbours); adjacent pairs first, then any pair, smallest combined box first
+  if (merge && fb.length > 1) {
+    const alive = fb.map(() => true), fnb = fb.map(() => new Set());
+    for (let i = 0; i < n; i++) for (let k = adj.start[i]; k < adj.start[i + 1]; k++) { const a = fragField[i], b = fragField[adj.nb[k]]; if (a !== b) { fnb[a].add(b); fnb[b].add(a); } }
+    const ub = (a, b) => [Math.min(fb[a][0], fb[b][0]), Math.min(fb[a][1], fb[b][1]), Math.max(fb[a][2], fb[b][2]), Math.max(fb[a][3], fb[b][3])];
+    const ok = u => u[2] - u[0] <= lim && u[3] - u[1] <= lim, into = fb.map((_, k) => k), root = k => { while (into[k] !== k) k = into[k] = into[into[k]]; return k; };
+    for (const adjacentOnly of [true, false]) {
+      for (let changed = true; changed;) {
+        changed = false; let best = null;
+        for (let a = 0; a < fb.length; a++) { if (!alive[a]) continue; const cand = adjacentOnly ? [...fnb[a]] : fb.map((_, k) => k);
+          for (const b of cand) { if (b <= a || !alive[b]) continue; const u = ub(a, b); if (!ok(u)) continue; const area = (u[2] - u[0]) * (u[3] - u[1]); if (!best || area < best[0]) best = [area, a, b, u]; } }
+        if (best) { const [, a, b, u] = best; fb[a] = u; alive[b] = false; into[b] = a; for (const x of fnb[b]) { if (x !== a) { fnb[a].add(x); fnb[x].delete(b); fnb[x].add(a); } } fnb[a].delete(b); changed = true; }
+      }
+    }
+    const remap = new Int32Array(fb.length).fill(-1); let m = 0; for (let k = 0; k < fb.length; k++) if (alive[k]) remap[k] = m++;
+    for (let i = 0; i < n; i++) fragField[i] = remap[root(fragField[i])];
+    for (let k = fb.length - 1; k >= 0; k--) if (!alive[k]) fb.splice(k, 1);
+  }
+  const fields = fb.map((b, k) => { const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; return { i: k, j: 0, x0: cx - size / 2, y0: cy - size / 2, x1: cx + size / 2, y1: cy + size / 2 }; });
+  return { fragField, fields, fieldSeq: walkFields(adj, fragField, fields), dist };
+}
+
+// split one trapezoid at x = c (or y = c) → pieces [y0,y1,xl0,xr0,xl1,xr1] on the low side and the high side
+function splitTrap(t, o, axis, c) {
+  const y0 = t[o], y1 = t[o + 1], H = y1 - y0, lo = [], hi = [], E = 1e-9;
+  const at = f => [t[o + 2] + (t[o + 4] - t[o + 2]) * f, t[o + 3] + (t[o + 5] - t[o + 3]) * f];
+  if (axis === 1) { // horizontal cut
+    if (c <= y0 + E) return { lo, hi: [[y0, y1, t[o + 2], t[o + 3], t[o + 4], t[o + 5]]] };
+    if (c >= y1 - E) return { lo: [[y0, y1, t[o + 2], t[o + 3], t[o + 4], t[o + 5]]], hi };
+    const [L, R] = at((c - y0) / H); return { lo: [[y0, c, t[o + 2], t[o + 3], L, R]], hi: [[c, y1, L, R, t[o + 4], t[o + 5]]] };
+  }
+  const ys = [y0]; for (const [a, b] of [[t[o + 2], t[o + 4]], [t[o + 3], t[o + 5]]]) if ((a - c) * (b - c) < 0) ys.push(y0 + H * (c - a) / (b - a));
+  ys.push(y1); ys.sort((p, q) => p - q);
+  for (let k = 0; k + 1 < ys.length; k++) {
+    const ya = ys[k], yb = ys[k + 1]; if (yb - ya <= E) continue;
+    const [La, Ra] = at((ya - y0) / H), [Lb, Rb] = at((yb - y0) / H);
+    if (Math.min(Ra, c) - La > E || Math.min(Rb, c) - Lb > E) lo.push([ya, yb, La, Math.max(La, Math.min(Ra, c)), Lb, Math.max(Lb, Math.min(Rb, c))]);
+    if (Ra - Math.max(La, c) > E || Rb - Math.max(Lb, c) > E) hi.push([ya, yb, Math.min(Ra, Math.max(La, c)), Ra, Math.min(Rb, Math.max(Lb, c)), Rb]);
+  }
+  return { lo, hi };
+}
+
+// Straighten stitches: a cut through a structure made of many thin slivers is a staircase. For every stitch between
+// two fields, cut once across the structure (vertical line for a horizontal-running stretch, horizontal otherwise) and
+// split the figures exactly there. Skipped where the result would no longer fit in its field.
+export function straightenCuts(frags, fragGroup, adj, fragField, fields, size) {
+  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n), cut = new Uint8Array(n);
+  for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); }
+  for (let i = 0; i < n; i++) for (let k = adj.start[i]; k < adj.start[i + 1]; k++) if (fragField[adj.nb[k]] !== fragField[i]) cut[i] = 1;
+  let sz = 0; for (let i = 0; i < n; i++) { const o = i * 6; sz += Math.max(t[o + 1] - t[o], t[o + 3] - t[o + 2]); }
+  const cs = Math.max(1, 4 * sz / Math.max(1, n)); // window padding ≈ a few figure sizes
+  const box = fields.map(() => [Infinity, Infinity, -Infinity, -Infinity]);
+  const grow = (b, p) => { b[0] = Math.min(b[0], p[2], p[4]); b[2] = Math.max(b[2], p[3], p[5]); b[1] = Math.min(b[1], p[0]); b[3] = Math.max(b[3], p[1]); };
+  for (let i = 0; i < n; i++) grow(box[fragField[i]], [t[i * 6], t[i * 6 + 1], t[i * 6 + 2], t[i * 6 + 3], t[i * 6 + 4], t[i * 6 + 5]]);
+  const repl = new Map(); // figure → [[piece, field], ...]
+  const seen = new Uint8Array(n); let done = 0;
+  for (let s = 0; s < n; s++) {
+    if (!cut[s] || seen[s]) continue;
+    const cl = [], st = [s]; seen[s] = 1;
+    while (st.length) { const v = st.pop(); cl.push(v); for (let k = adj.start[v]; k < adj.start[v + 1]; k++) { const u = adj.nb[k]; if (cut[u] && !seen[u]) { seen[u] = 1; st.push(u); } } }
+    const fs = [...new Set(cl.map(i => fragField[i]))]; if (fs.length !== 2) continue;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; const m = [[0, 0, 0], [0, 0, 0]];
+    for (const i of cl) { const o = i * 6; x0 = Math.min(x0, t[o + 2], t[o + 4]); x1 = Math.max(x1, t[o + 3], t[o + 5]); y0 = Math.min(y0, t[o]); y1 = Math.max(y1, t[o + 1]); const q = fragField[i] === fs[0] ? 0 : 1; m[q][0] += cx[i]; m[q][1] += cy[i]; m[q][2]++; }
+    const axis = (x1 - x0) >= (y1 - y0) ? 0 : 1, ma = m[0][axis] / m[0][2], mb = m[1][axis] / m[1][2]; if (!(m[0][2] && m[1][2])) continue;
+    const c = (ma + mb) / 2, loF = ma <= mb ? fs[0] : fs[1], hiF = loF === fs[0] ? fs[1] : fs[0];
+    // figures of the two fields around the stitch that are connected to it through the structure itself
+    // (a neighbouring strand that merely passes nearby must not be split)
+    const pad = cs, wx0 = x0 - pad, wx1 = x1 + pad, wy0 = y0 - pad, wy1 = y1 + pad, win = new Set(cl.filter(i => !repl.has(i))), wq = [...win];
+    const inWin = i => { const o = i * 6; return Math.max(t[o + 3], t[o + 5]) >= wx0 && Math.min(t[o + 2], t[o + 4]) <= wx1 && t[o + 1] >= wy0 && t[o] <= wy1; };
+    while (wq.length) { const v = wq.pop(); for (let k = adj.start[v]; k < adj.start[v + 1]; k++) { const u = adj.nb[k]; if (!win.has(u) && !repl.has(u) && (fragField[u] === loF || fragField[u] === hiF) && inWin(u)) { win.add(u); wq.push(u); } } }
+    const plan = [], nb0 = box[loF].slice(), nb1 = box[hiF].slice();
+    for (const i of win) { const sp = splitTrap(t, i * 6, axis, c); const out = [...sp.lo.map(p => [p, loF]), ...sp.hi.map(p => [p, hiF])]; plan.push([i, out]); for (const [p, f] of out) grow(f === loF ? nb0 : nb1, p); }
+    const fitsBox = b => b[2] - b[0] <= size && b[3] - b[1] <= size;
+    if (!fitsBox(nb0) || !fitsBox(nb1)) continue;
+    box[loF] = nb0; box[hiF] = nb1; for (const [i, out] of plan) repl.set(i, out); done++;
+  }
+  const buf = new TrapBuf(n + repl.size * 2), grp = [], fld = [];
+  for (let i = 0; i < n; i++) {
+    const r = repl.get(i);
+    if (!r) { const o = i * 6; buf.push(t[o], t[o + 1], t[o + 2], t[o + 3], t[o + 4], t[o + 5], frags.layer[i], frags.comp[i]); grp.push(fragGroup[i]); fld.push(fragField[i]); continue; }
+    for (const [p, f] of r) { buf.push(p[0], p[1], p[2], p[3], p[4], p[5], frags.layer[i], frags.comp[i]); grp.push(fragGroup[i]); fld.push(f); }
+  }
+  const nf = fields.map((f, k) => { const b = box[k], mx = (b[0] + b[2]) / 2, my = (b[1] + b[3]) / 2; return { ...f, x0: mx - size / 2, y0: my - size / 2, x1: mx + size / 2, y1: my + size / 2 }; });
+  return { frags: buf.trim(), fragGroup: Int32Array.from(grp), fragField: Int32Array.from(fld), fields: nf, straightened: done };
+}
+
+// field visiting order: depth-first along field adjacency (finish one branch before the next), then nearest unvisited
+export function walkFields(adj, fragField, fields) {
+  const nf = fields.length, nbs = Array.from({ length: nf }, () => new Set());
+  for (let i = 0; i < adj.n; i++) for (let k = adj.start[i]; k < adj.start[i + 1]; k++) { const a = fragField[i], b = fragField[adj.nb[k]]; if (a !== b && a >= 0 && b >= 0) { nbs[a].add(b); nbs[b].add(a); } }
+  const seen = new Uint8Array(nf), seq = [], c = f => [(fields[f].x0 + fields[f].x1) / 2, (fields[f].y0 + fields[f].y1) / 2];
+  let cur = 0;
+  while (seq.length < nf) {
+    if (seen[cur]) { let bd = Infinity; const [px, py] = c(seq[seq.length - 1]); for (let f = 0; f < nf; f++) if (!seen[f]) { const [x, y] = c(f), d = (x - px) ** 2 + (y - py) ** 2; if (d < bd) { bd = d; cur = f; } } }
+    const stack = [cur];
+    while (stack.length) { const f = stack.pop(); if (seen[f]) continue; seen[f] = 1; seq.push(f); [...nbs[f]].filter(g => !seen[g]).sort((a, b) => b - a).forEach(g => stack.push(g)); }
+  }
+  return seq;
+}
+
+// Fixed grid: choose the offset that minimises how much pattern the field lines cut through (x and y independently)
+export function bestGridOffset(frags, size, bbox, steps = 64) {
+  const t = frags.t, n = frags.n, best = (axis) => {
+    let bo = 0, bc = Infinity;
+    for (let s = 0; s < steps; s++) {
+      const off = (axis ? bbox.y0 : bbox.x0) - size + size * s / steps; let c = 0;
+      for (let i = 0; i < n; i++) { const o = i * 6; const a = axis ? t[o] : Math.min(t[o + 2], t[o + 4]), b = axis ? t[o + 1] : Math.max(t[o + 3], t[o + 5]); if (Math.floor((a - off) / size) !== Math.floor((b - off) / size)) c += axis ? Math.max(t[o + 3] - t[o + 2], t[o + 5] - t[o + 4]) : t[o + 1] - t[o]; }
+      if (c < bc - 1e-9) { bc = c; bo = off; }
+    }
+    return bo;
+  };
+  return { X0: best(0), Y0: best(1) };
+}
+
+// Stitch metrics: a stitch = one place where a field boundary cuts the pattern (connected set of cut figures)
+export function fieldMetrics(frags, adj, fragField, fields, fieldSeq) {
+  const n = frags.n, t = frags.t, cut = new Uint8Array(n); let cutLen = 0;
+  for (let i = 0; i < n; i++) for (let k = adj.start[i]; k < adj.start[i + 1]; k++) { const j = adj.nb[k]; if (fragField[i] !== fragField[j]) { cut[i] = 1; if (j > i) cutLen += adj.w[k]; } }
+  // a stitch = cut figures that touch each other (shared edge OR corner: a straight cut through slanted slivers leaves
+  // triangles that only meet at points) — union-find over touching bounding boxes of cut figures
+  const ids = []; for (let i = 0; i < n; i++) if (cut[i]) ids.push(i);
+  const par = new Int32Array(ids.length).map((_, k) => k), find = k => { while (par[k] !== k) k = par[k] = par[par[k]]; return k; };
+  const bb = k => { const o = ids[k] * 6; return [Math.min(t[o + 2], t[o + 4]), t[o], Math.max(t[o + 3], t[o + 5]), t[o + 1]]; };
+  let ms = 0; for (let k = 0; k < ids.length; k++) { const b = bb(k); ms += Math.max(b[2] - b[0], b[3] - b[1]); }
+  const cs = Math.max(1, 2 * ms / Math.max(1, ids.length)), grid = new Map(), E = 1e-3;
+  for (let k = 0; k < ids.length; k++) {
+    const b = bb(k), a0 = Math.floor(b[0] / cs), a1 = Math.floor(b[2] / cs), b0 = Math.floor(b[1] / cs), b1 = Math.floor(b[3] / cs);
+    for (let a = a0; a <= a1 && a - a0 < 64; a++) for (let c = b0; c <= b1 && c - b0 < 64; c++) {
+      const key = a * 1048576 + c; let L = grid.get(key); if (!L) grid.set(key, L = []);
+      for (const q of L) { const o = bb(q); if (o[0] <= b[2] + E && o[2] >= b[0] - E && o[1] <= b[3] + E && o[3] >= b[1] - E) par[find(q)] = find(k); }
+      L.push(k);
+    }
+  }
+  const acc = new Map();
+  for (let k = 0; k < ids.length; k++) { const r = find(k), o = ids[k] * 6; let a = acc.get(r); if (!a) acc.set(r, a = [0, 0, 0]); a[0] += 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); a[1] += 0.5 * (t[o] + t[o + 1]); a[2]++; }
+  const pts = []; for (const a of acc.values()) pts.push(a[0] / a[2], a[1] / a[2]);
+  const stitches = acc.size;
+  const used = new Set(fragField), seq = fieldSeq.filter(f => used.has(f)); let travel = 0;
+  for (let k = 1; k < seq.length; k++) { const a = fields[seq[k - 1]], b = fields[seq[k]]; travel += Math.hypot((a.x0 + a.x1 - b.x0 - b.x1) / 2, (a.y0 + a.y1 - b.y0 - b.y1) / 2); }
+  return { stitches, cutLen, fields: used.size, travel, pts: Float64Array.from(pts) };
 }
 
 // ── point-in-figures (for tests / hover) ─────────────────

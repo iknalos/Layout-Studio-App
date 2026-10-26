@@ -114,3 +114,21 @@ console.log(fail ? `${fail} FAILED` : 'ALL PASS');
   ok(switches === 1, `follow geometry: one jump between the two pads (${switches})`);
   console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. follow geometry)');
 }
+{ // 11: follow-geometry placement beats a fixed grid on a long spiral line, with straight cuts
+  const { fragmentAdjacency, followGeometryFields, straightenCuts, fieldMetrics, bestGridOffset, fieldSequence } = await import('../geom.js');
+  const pts = []; for (let a = 0.6; a < 6 * 2 * Math.PI; a += 0.02) { const r = 40000 + 9000 * a; pts.push([Math.round(r * Math.cos(a)), Math.round(r * Math.sin(a))]); }
+  const lib = { dbUnit: 1e-9, cells: [{ name: 'S', elements: [{ type: 'path', layer: 1, width: 2500, xy: pts }] }], cellMap: {} }; lib.cellMap.S = lib.cells[0];
+  const Fl = flattenLib(lib, {}), H = healAndFracture(Fl.rings, Fl.ringLayer), F = fragmentForPEC(H.traps, H.nComp, { fragMax: 3000, edgeW: 40, smallSize: 300 });
+  const adj = fragmentAdjacency(F.frags), size = 100000;
+  const og = bestGridOffset(F.frags, size, Fl.bbox), G = tileFields(F.frags, F.fragGroup, { size, originMode: 'custom', ox: og.X0, oy: og.Y0, bbox: Fl.bbox });
+  const mg = fieldMetrics(G.frags, fragmentAdjacency(G.frags), G.fragField, G.fields, fieldSequence(G.NX, G.NY));
+  const r = followGeometryFields(F.frags, adj, { size, start: 'end' }), z = straightenCuts(F.frags, F.fragGroup, adj, r.fragField, r.fields, size);
+  const m0 = fieldMetrics(F.frags, adj, r.fragField, r.fields, r.fieldSeq), mz = fieldMetrics(z.frags, fragmentAdjacency(z.frags), z.fragField, z.fields, r.fieldSeq);
+  let A0 = 0, A1 = 0; for (let i = 0; i < F.frags.n; i++) A0 += trapArea(F.frags.t, i * 6); for (let i = 0; i < z.frags.n; i++) A1 += trapArea(z.frags.t, i * 6);
+  ok(mz.stitches < mg.stitches, `spiral: follow geometry ${mz.stitches} stitches vs optimised grid ${mg.stitches}`);
+  ok(mz.cutLen <= m0.cutLen && mz.stitches === m0.stitches, `straightening keeps ${mz.stitches} stitches, cut length ${(m0.cutLen / 1000).toFixed(1)} → ${(mz.cutLen / 1000).toFixed(1)} µm`);
+  ok(Math.abs(A1 - A0) / A0 < 1e-9, 'straightening keeps the exposed area');
+  let inside = true; for (let i = 0; i < z.frags.n; i++) { const o = i * 6, f = z.fields[z.fragField[i]], t = z.frags.t; if (Math.min(t[o + 2], t[o + 4]) < f.x0 - 1e-6 || Math.max(t[o + 3], t[o + 5]) > f.x1 + 1e-6 || t[o] < f.y0 - 1e-6 || t[o + 1] > f.y1 + 1e-6) inside = false; }
+  ok(inside, 'every figure lies inside its (floating) field');
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. field placement)');
+}

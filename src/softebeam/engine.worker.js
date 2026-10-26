@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // Soft-EBeam pipeline worker: keeps the layout and every stage result off the UI thread.
-import { flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea } from './geom.js';
+import { flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea, fragmentAdjacency, followGeometryFields, straightenCuts, bestGridOffset, fieldMetrics, structureSeeds, geoDistance } from './geom.js';
 import { runPEC, quantizeDoses, quantizeLadder, simulate, contour, energyAt } from './pec.js';
 import { exportGDS, doseTable } from './export.js';
 
@@ -25,7 +25,7 @@ const cmds = {
     let rings = F.rings;
     if (bias) rings = rings.map(r => biasRing(r, bias));
     S.rings = rings; S.ringLayer = F.ringLayer; S.bbox = F.bbox;
-    for (const k of ['traps', 'F', 'pec', 'T', 'q']) delete S[k];
+    for (const k of ['traps', 'F', 'pec', 'T', 'q', 'adjF']) delete S[k];
     const pack = flatRings(rings, F.ringLayer);
     return { result: { nRings: rings.length, bbox: F.bbox, truncated: F.truncated, top: F.top, ...pack }, transfer: [pack.xy.buffer, pack.off.buffer, pack.layer.buffer] };
   },
@@ -34,7 +34,7 @@ const cmds = {
     let { traps, nComp, compSrc } = healAndFracture(S.rings, S.ringLayer);
     if (mode === 'rect') traps = toRectangles(traps, rectStep || 10);
     S.traps = traps; S.nComp = nComp; S.compSrc = compSrc;
-    for (const k of ['F', 'pec', 'T', 'q']) delete S[k];
+    for (const k of ['F', 'pec', 'T', 'q', 'adjF']) delete S[k];
     let area = 0; for (let i = 0; i < traps.n; i++) area += trapArea(traps.t, i * 6);
     const c = copyTraps(traps);
     return { result: { n: traps.n, nComp, area, traps: c }, transfer: [c.t.buffer, c.layer.buffer, c.comp.buffer] };
@@ -52,7 +52,7 @@ const cmds = {
     const qErr = P ? energyAt(P, Dq) : null;
     // area per class
     const areas = new Float64Array(q.n + 1), t = F.frags.t; for (let i = 0; i < F.frags.n; i++) areas[q.cls[F.fragGroup[i]]] += trapArea(t, i * 6);
-    S.pec = P; S.dose = dose; S.q = q; S.Dq = Dq; S.areas = areas; delete S.T;
+    S.pec = P; S.dose = dose; S.q = q; S.Dq = Dq; S.areas = areas; delete S.T; delete S.adjF;
     const fr = copyTraps(F.frags), out = {
       nFrags: F.frags.n, nGroups: F.nGroups, frags: fr, fragGroup: F.fragGroup.slice(), ctrl: F.ctrl.slice(), kind: F.kind.slice(),
       dose: dose.slice(), cls: q.cls.slice(), classDose: q.classDose.slice(), counts: Array.from(q.counts || []), areas: Array.from(areas), nClasses: q.n, accuracy: q.accuracy,
@@ -61,18 +61,39 @@ const cmds = {
     };
     return { result: out, transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, out.fragGroup.buffer, out.ctrl.buffer, out.kind.buffer, out.dose.buffer, out.cls.buffer] };
   },
-  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'raster' }) {
+  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'raster', placement = 'auto' }, progress) {
     if (!S.F) throw new Error('run PEC first');
     const t = S.F.frags.t; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < S.F.frags.n; i++) { const o = i * 6; x0 = Math.min(x0, t[o + 2], t[o + 4]); x1 = Math.max(x1, t[o + 3], t[o + 5]); y0 = Math.min(y0, t[o]); y1 = Math.max(y1, t[o + 1]); }
-    const bbox = { x0, y0, x1, y1 }, whole = Math.max(x1 - x0, y1 - y0) * 1.001 + 1; // fields off → one field around everything
-    const T = tileFields(S.F.frags, S.F.fragGroup, { size: fieldsOn ? size : whole, originMode: fieldsOn ? originMode : 'bbox', ox, oy, bbox });
-    const fieldSeq = fieldSequence(T.NX, T.NY, traversal, start);
-    const dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
-    const o = figureSequence(T.frags, T.fragField, T.fields, fieldSeq, { figOrder, start, dose });
-    T.order = fieldSeq; T.seq = o.seq; S.T = T;
-    const fr = copyTraps(T.frags), seq = o.seq.slice();
-    return { result: { n: T.frags.n, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: fieldSeq, fieldSeq, seq, NX: T.NX, NY: T.NY, fieldsOn, travel: o.travel, jumpMax: o.jumpMax, fieldJumps: o.fieldJumps }, transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, seq.buffer] };
+    const bbox = { x0, y0, x1, y1 }, whole = Math.max(x1 - x0, y1 - y0) * 1.001 + 1;
+    if (!S.adjF) S.adjF = fragmentAdjacency(S.F.frags);
+    const grid = (name, T) => { const seq = fieldSequence(T.NX, T.NY, traversal, start), a = fragmentAdjacency(T.frags); return { name, T, seq, adj: a, m: fieldMetrics(T.frags, a, T.fragField, T.fields, seq), seedMode: 'end' }; };
+    const follow = (name, st) => {
+      const r = followGeometryFields(S.F.frags, S.adjF, { size, start: st }), z = straightenCuts(S.F.frags, S.F.fragGroup, S.adjF, r.fragField, r.fields, size);
+      const T = { frags: z.frags, fragGroup: z.fragGroup, fragField: z.fragField, fields: z.fields, NX: z.fields.length, NY: 1 }, a = fragmentAdjacency(T.frags);
+      return { name, T, seq: r.fieldSeq, adj: a, m: fieldMetrics(T.frags, a, T.fragField, T.fields, r.fieldSeq), seedMode: st };
+    };
+    const cands = [];
+    if (!fieldsOn) cands.push(grid('One field', tileFields(S.F.frags, S.F.fragGroup, { size: whole, originMode: 'bbox', bbox })));
+    else {
+      const want = k => placement === k || placement === 'auto';
+      if (want('grid')) { progress({ label: 'Fields: fixed grid' }); cands.push(grid('Fixed grid', tileFields(S.F.frags, S.F.fragGroup, { size, originMode, ox, oy, bbox }))); }
+      if (want('gridOpt')) { progress({ label: 'Fields: optimising grid offset' }); const o = bestGridOffset(S.F.frags, size, bbox); cands.push(grid('Fixed grid, optimised offset', tileFields(S.F.frags, S.F.fragGroup, { size, originMode: 'custom', ox: o.X0, oy: o.Y0, bbox }))); }
+      if (want('followCenter')) { progress({ label: 'Fields: follow geometry (centre first)' }); cands.push(follow('Follow geometry, centre first', 'center')); }
+      if (want('followEnd')) { progress({ label: 'Fields: follow geometry (from one end)' }); cands.push(follow('Follow geometry, from one end', 'end')); }
+    }
+    // stitches dominate; extra fields and stage travel only break ties between similar options
+    const score = c => c.m.stitches + 0.1 * c.m.fields + c.m.travel / 1e6;
+    let best = cands[0]; for (const c of cands) if (score(c) < score(best)) best = c;
+    const T = best.T, dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
+    const dist = figOrder === 'shapes' ? geoDistance(T.frags, best.adj, structureSeeds(T.frags, best.adj, best.seedMode)) : null;
+    const o = figureSequence(T.frags, T.fragField, T.fields, best.seq, { figOrder, start, dose, dist });
+    S.T = { ...T, order: best.seq, seq: o.seq };
+    const fr = copyTraps(T.frags), seq = o.seq.slice(), pts = best.m.pts.slice();
+    return { result: { n: T.frags.n, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: best.seq, fieldSeq: best.seq, seq, NX: T.NX, NY: T.NY, fieldsOn, travel: o.travel, jumpMax: o.jumpMax, fieldJumps: o.fieldJumps,
+      placementUsed: best.name, stitches: best.m.stitches, cutLen: best.m.cutLen, nFields: best.m.fields, stageTravel: best.m.travel, stitchPts: pts,
+      candidates: cands.length > 1 ? cands.map(c => ({ name: c.name, stitches: c.m.stitches, cutLen: c.m.cutLen, fields: c.m.fields, travel: c.m.travel, chosen: c === best })) : null },
+      transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, seq.buffer, pts.buffer] };
   },
   sim({ win, pitch, thr, psf, uniform }) {
     if (!S.F) throw new Error('run PEC first');

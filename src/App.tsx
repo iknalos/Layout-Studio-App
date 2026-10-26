@@ -1,7 +1,8 @@
 // @ts-nocheck
 import{useState,useRef,useEffect,useCallback,useMemo}from"react";
+import SoftEBeam from"./softebeam/SoftEBeam";
 
-function LandingPage({onEnter}){
+function LandingPage({onEnter,onEbeam}){
   return(
     <div style={{background:'#080c14',color:'#f0f4ff',fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',minHeight:'100vh',overflowX:'hidden'}}>
       <style>{`
@@ -30,7 +31,10 @@ function LandingPage({onEnter}){
         <div style={{display:'flex',gap:28}}>
           {['Features','Formats','How it works'].map(l=><a key={l} href={`#${l.toLowerCase().replace(/ /g,'-')}`} style={{color:'#8892a4',textDecoration:'none',fontSize:14}}>{l}</a>)}
         </div>
-        <button className="btn-primary" style={{padding:'8px 18px',fontSize:13}} onClick={onEnter}>Open App →</button>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn-secondary" style={{padding:'7px 14px',fontSize:13}} onClick={onEbeam} title="E-beam proximity effect correction & data prep">⚡ Soft-EBeam</button>
+          <button className="btn-primary" style={{padding:'8px 18px',fontSize:13}} onClick={onEnter}>Open App →</button>
+        </div>
       </nav>
       <section style={{minHeight:'92vh',display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'80px 5% 60px',position:'relative',overflow:'hidden'}}>
         <div className="hex-grid"/>
@@ -83,8 +87,9 @@ function LandingPage({onEnter}){
             {icon:'↩',bg:'rgba(0,212,170,.1)',title:'Undo / Redo',desc:'30-step history. Select, move, rotate, mirror, copy, delete elements. Arrow-key nudging with shift for coarse steps.'},
             {icon:'📷',bg:'rgba(14,165,233,.1)',title:'PNG Export',desc:'Export a screenshot of your canvas — perfect for papers, presentations, and fabrication documentation.'},
             {icon:'✛',bg:'rgba(124,58,237,.1)',title:'Alignment Marks',desc:'Insert standard cruciform alignment marks at the origin with one click — essential for multi-layer mask sets.'},
+            {icon:'⚡',bg:'rgba(194,65,12,.12)',title:'Soft-EBeam: E-beam PEC',desc:'Proximity effect correction, Monte Carlo PSFs, fracturing, write fields and dose-classed GDS export for electron-beam lithography.',go:onEbeam},
           ].map(f=>(
-            <div key={f.title} className="feat-card">
+            <div key={f.title} className="feat-card" onClick={f.go} style={f.go?{cursor:'pointer',borderColor:'rgba(194,65,12,.45)'}:undefined}>
               <div style={{width:42,height:42,borderRadius:10,background:f.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,marginBottom:14}}>{f.icon}</div>
               <h3 style={{fontSize:15,fontWeight:600,marginBottom:8}}>{f.title}</h3>
               <p style={{color:'#8892a4',fontSize:13,lineHeight:1.6}}>{f.desc}</p>
@@ -165,12 +170,18 @@ function LandingPage({onEnter}){
 }
 
 export default function App(){
-  const[showApp,setShowApp]=useState(
-    typeof window!=='undefined'&&
-    (window.location.search.includes('app=1')||window.location.pathname.startsWith('/app'))
-  );
-  if(showApp)return<GDSStudio/>;
-  return<LandingPage onEnter={()=>{window.history.pushState({},'','/?app=1');setShowApp(true);}}/>;
+  const initMode=()=>{if(typeof window==='undefined')return'landing';const q=window.location.search,p=window.location.pathname;if(q.includes('ebeam=1')||p.startsWith('/ebeam'))return'ebeam';if(q.includes('app=1')||p.startsWith('/app'))return'app';return'landing';};
+  const[mode,setMode]=useState(initMode);
+  const[editorOpen,setEditorOpen]=useState(()=>initMode()==='app');
+  const[handoff,setHandoff]=useState(null);
+  const go=(m,url)=>{window.history.pushState({},'',url);setMode(m);if(m==='app')setEditorOpen(true);};
+  useEffect(()=>{const h=()=>setMode(initMode());window.addEventListener('popstate',h);return()=>window.removeEventListener('popstate',h);},[]);
+  const parsers=useMemo(()=>({parseGDSAsync,parseOASIS}),[]);
+  if(mode==='landing')return<LandingPage onEnter={()=>go('app','/?app=1')} onEbeam={()=>go('ebeam','/?ebeam=1')}/>;
+  return<>
+    {editorOpen&&<div style={{display:mode==='app'?'block':'none'}}><GDSStudio onEbeam={lib=>{if(lib)setHandoff({lib,at:Date.now()});go('ebeam','/?ebeam=1');}}/></div>}
+    {mode==='ebeam'&&<SoftEBeam initialLib={handoff&&handoff.lib} initialName={handoff&&handoff.lib&&(handoff.lib.name||'editor layout')} parsers={parsers} onBack={()=>go('app','/?app=1')}/>}
+  </>;
 }
 
 const LCOLS=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4','#f032e6','#bfef45','#fabed4','#469990'];
@@ -569,7 +580,7 @@ function runDRC(cell,dbUnit,minSpNm,minFeatNm){
 }
 
 // ── MAIN COMPONENT ────────────────────────────────────────
-function GDSStudio(){
+function GDSStudio({onEbeam}={}){
   const[lib,setLib]=useState(null);
   const[selCell,setSelCell]=useState(null);
   const[lc,setLc]=useState({});const[lv,setLv]=useState({});
@@ -899,6 +910,7 @@ RULES:
         <button style={tb(true,polarInvert)} onClick={()=>setPolarInvert(v=>!v)}>◐ Pol</button>
         <button style={tb(true)} onClick={insertAlignMark} disabled={!lib}>✛ Mark</button>
         <button style={tb(true,showDrcPanel)} onClick={()=>setShowDrcPanel(v=>!v)}>DRC</button>
+        {onEbeam&&<button style={{...tb(true),background:'#fff4ec',color:'#c2410c',border:'1px solid #f5b48a',fontWeight:'bold'}} onClick={()=>onEbeam(libRef.current)} title="Open this layout in Soft-EBeam (e-beam PEC, fracturing, export)">⚡ E-Beam</button>}
         <button style={{...tb(true,tab==='contact'),background:tab==='contact'?'#e0e8ff':'#226',color:tab==='contact'?'#226':'#fff',border:'1px solid #226'}} onClick={()=>setTab('contact')}>💬 Contact</button>
         <div style={{flex:1}}/>
         {cursor&&<span style={{color:'#aaa',fontSize:11}}>{cursor.x},{cursor.y} nm</span>}

@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // Soft-EBeam pipeline worker: keeps the layout and every stage result off the UI thread.
-import { flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, topCells, layersOf, trapArea } from './geom.js';
+import { flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea } from './geom.js';
 import { runPEC, quantizeDoses, quantizeLadder, simulate, contour, energyAt } from './pec.js';
 import { exportGDS, doseTable } from './export.js';
 
@@ -61,11 +61,18 @@ const cmds = {
     };
     return { result: out, transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, out.fragGroup.buffer, out.ctrl.buffer, out.kind.buffer, out.dose.buffer, out.cls.buffer] };
   },
-  fields({ size, originMode, ox, oy }) {
+  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'raster' }) {
     if (!S.F) throw new Error('run PEC first');
-    const T = tileFields(S.F.frags, S.F.fragGroup, { size, originMode, ox, oy, bbox: S.bbox }); S.T = T;
-    const fr = copyTraps(T.frags);
-    return { result: { n: T.frags.n, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: T.order, NX: T.NX, NY: T.NY }, transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer] };
+    const t = S.F.frags.t; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < S.F.frags.n; i++) { const o = i * 6; x0 = Math.min(x0, t[o + 2], t[o + 4]); x1 = Math.max(x1, t[o + 3], t[o + 5]); y0 = Math.min(y0, t[o]); y1 = Math.max(y1, t[o + 1]); }
+    const bbox = { x0, y0, x1, y1 }, whole = Math.max(x1 - x0, y1 - y0) * 1.001 + 1; // fields off → one field around everything
+    const T = tileFields(S.F.frags, S.F.fragGroup, { size: fieldsOn ? size : whole, originMode: fieldsOn ? originMode : 'bbox', ox, oy, bbox });
+    const fieldSeq = fieldSequence(T.NX, T.NY, traversal, start);
+    const dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
+    const o = figureSequence(T.frags, T.fragField, T.fields, fieldSeq, { figOrder, start, dose });
+    T.order = fieldSeq; T.seq = o.seq; S.T = T;
+    const fr = copyTraps(T.frags), seq = o.seq.slice();
+    return { result: { n: T.frags.n, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: fieldSeq, fieldSeq, seq, NX: T.NX, NY: T.NY, fieldsOn, travel: o.travel, jumpMax: o.jumpMax, fieldJumps: o.fieldJumps }, transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, seq.buffer] };
   },
   sim({ win, pitch, thr, psf, uniform }) {
     if (!S.F) throw new Error('run PEC first');
@@ -76,8 +83,8 @@ const cmds = {
   },
   export({ opts, baseDose }) {
     if (!S.F) throw new Error('run PEC first');
-    const src = S.T && opts.useFields ? S.T : null;
-    const job = { frags: src ? src.frags : S.F.frags, fragGroup: src ? src.fragGroup : S.F.fragGroup, groupClass: S.q.cls, classDose: S.q.classDose, fragField: src && src.fragField, fields: src && src.fields, order: src && src.order };
+    const src = S.T || null; // written in the chosen writing order; one cell per field only when fields are on
+    const job = { frags: src ? src.frags : S.F.frags, fragGroup: src ? src.fragGroup : S.F.fragGroup, groupClass: S.q.cls, classDose: S.q.classDose, fragField: src && src.fragField, fields: src && src.fields, order: src && src.order, seq: src && src.seq };
     const bytes = exportGDS(job, opts);
     const table = doseTable(S.q.classDose, S.q.counts, S.areas, { baseDose, mode: opts.mode, layerBase: opts.layerBase });
     return { result: { bytes, table }, transfer: [bytes.buffer] };

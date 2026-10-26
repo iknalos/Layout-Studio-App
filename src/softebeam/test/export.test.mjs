@@ -31,3 +31,15 @@ let A0 = 0; for (let i = 0; i < traps.n; i++) A0 += trapArea(traps.t, i * 6);
   const tb = doseTable(classDose, [0, 5, 6, 7], null, { baseDose: 300 }); ok(tb.includes('375.00'), 'dose table with absolute doses');
 }
 console.log(fail ? `${fail} FAILED` : 'ALL PASS');
+{ // writing order is preserved in the file
+  const { fieldSequence, figureSequence } = await import('../geom.js');
+  const T = tileFields(F.frags, F.fragGroup, { size: 1000, bbox: { x0: 0, y0: 0, x1: 4000, y1: 1500 } });
+  const fs = fieldSequence(T.NX, T.NY, 'rasterX', 'tl'), o = figureSequence(T.frags, T.fragField, T.fields, fs, { figOrder: 'raster', start: 'tl' });
+  const cells = readGDS(exportGDS({ frags: T.frags, fragGroup: T.fragGroup, groupClass, classDose, fragField: T.fragField, fields: T.fields, order: fs, seq: o.seq }, {}));
+  const ys = cells[0].els.map(e => Math.max(...e.xy.map(p => p[1])));
+  const firstField = T.fields[fs[0]];
+  ok(cells[0].els.length === T.frags.n && ys[0] >= ys[ys.length - 1] && firstField.y1 >= 1500 - 1e-6, 'GDS element order follows the writing order (top fields first)');
+  const cf = readGDS(exportGDS({ frags: T.frags, fragGroup: T.fragGroup, groupClass, classDose, fragField: T.fragField, fields: T.fields, order: fs, seq: o.seq }, { cellPerField: true }));
+  ok(cf.find(c => c.name === 'TOP').els[0].sname === `F${firstField.j}_${firstField.i}`, 'cell-per-field: first SREF is the first written field');
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. order)');
+}

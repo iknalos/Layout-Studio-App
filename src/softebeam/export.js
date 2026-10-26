@@ -45,9 +45,10 @@ export function exportGDS(job, opts = {}) {
     return [L, c];
   };
   const writeFig = i => { const p = trapPts(t, i * 6, k); if (!p) return; const [L, D] = layerDt(i); g.rec(0x08, 0); g.i16(0x0D, L); g.i16(0x0E, D); g.xy(p); g.rec(0x11, 0); };
+  const seq = job.seq || (job.fragField && job.order ? orderByField(job) : null);
   if (cellPerField && job.fragField && job.fields) {
-    const byField = new Map(); for (let i = 0; i < frags.n; i++) { const f = job.fragField[i]; let L = byField.get(f); if (!L) byField.set(f, L = []); L.push(i); }
-    const order = (job.order || [...byField.keys()]).filter(f => byField.has(f));
+    const byField = new Map(), order = [];
+    for (let k = 0; k < frags.n; k++) { const i = seq ? seq[k] : k, f = job.fragField[i]; let L = byField.get(f); if (!L) { byField.set(f, L = []); order.push(f); } L.push(i); }
     const name = f => `F${job.fields[f].j}_${job.fields[f].i}`;
     for (const f of order) { g.stamp(0x05); g.str(0x06, name(f)); for (const i of byField.get(f)) writeFig(i); g.rec(0x07, 0); }
     g.stamp(0x05); g.str(0x06, top);
@@ -55,8 +56,7 @@ export function exportGDS(job, opts = {}) {
     g.rec(0x07, 0);
   } else {
     g.stamp(0x05); g.str(0x06, top);
-    const idx = job.fragField && job.order ? orderByField(job) : null;
-    if (idx) for (const i of idx) writeFig(i); else for (let i = 0; i < frags.n; i++) writeFig(i);
+    if (seq) for (const i of seq) writeFig(i); else for (let i = 0; i < frags.n; i++) writeFig(i);
     g.rec(0x07, 0);
   }
   g.rec(0x04, 0);

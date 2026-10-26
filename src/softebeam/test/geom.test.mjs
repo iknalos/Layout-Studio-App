@@ -79,3 +79,38 @@ function rasterArea(rings, step) { // nonzero-winding raster estimate of the uni
   ok(Hc.nComp === 1, `perf: 2000-finger comb (one component) → ${Hc.traps.n} traps in ${Date.now() - t0} ms`);
 }
 console.log(fail ? `${fail} FAILED` : 'ALL PASS');
+{ // 9: writing order
+  const { fieldSequence, figureSequence } = await import('../geom.js');
+  ok(JSON.stringify(fieldSequence(3, 2, 'meanderX', 'bl')) === '[0,1,2,5,4,3]', 'meander rows from bottom-left');
+  ok(JSON.stringify(fieldSequence(3, 2, 'rasterX', 'tl')) === '[3,4,5,0,1,2]', 'raster rows from top-left (top → bottom)');
+  ok(JSON.stringify(fieldSequence(2, 3, 'meanderY', 'bl')) === '[0,2,4,5,3,1]', 'meander columns');
+  ok(fieldSequence(5, 5, 'spiral')[0] === 12, 'spiral starts at the centre field');
+  const rings = []; for (let j = 0; j < 4; j++) for (let i = 0; i < 5; i++) rings.push(R(i * 200, j * 200, i * 200 + 100, j * 200 + 100));
+  const { traps, nComp } = healAndFracture(rings, rings.map(() => 1));
+  const F = fragmentForPEC(traps, nComp, { fragMax: 1000, edgeW: 10, smallSize: 500 });
+  const T = tileFields(F.frags, F.fragGroup, { size: 1e5, bbox: { x0: 0, y0: 0, x1: 900, y1: 700 } });
+  const fs = fieldSequence(T.NX, T.NY), cxy = i => { const o = i * 6, t = T.frags.t; return [0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]), 0.5 * (t[o] + t[o + 1])]; };
+  const tl = figureSequence(T.frags, T.fragField, T.fields, fs, { figOrder: 'raster', start: 'tl' });
+  ok(cxy(tl.seq[0])[1] > 600 && cxy(tl.seq[0])[0] < 100 && cxy(tl.seq[tl.seq.length - 1])[1] < 100, 'raster from top-left writes top row first, bottom row last');
+  const me = figureSequence(T.frags, T.fragField, T.fields, fs, { figOrder: 'meander', start: 'bl' });
+  ok(cxy(me.seq[4])[0] > 800 && cxy(me.seq[5])[0] > 800 && cxy(me.seq[9])[0] < 100, 'meander reverses direction each row');
+  const nn = figureSequence(T.frags, T.fragField, T.fields, fs, { figOrder: 'nearest' });
+  ok(new Set(nn.seq).size === T.frags.n && nn.travel <= me.travel * 1.2, `shortest-path visits all ${T.frags.n} figures, travel ${nn.travel.toFixed(0)} vs meander ${me.travel.toFixed(0)} nm`);
+  const big = []; for (let k = 0; k < 60000; k++) big.push(R((k % 300) * 300, Math.floor(k / 300) * 300, (k % 300) * 300 + 100, Math.floor(k / 300) * 300 + 100));
+  const H2 = healAndFracture(big, big.map(() => 1)), F2 = fragmentForPEC(H2.traps, H2.nComp, { fragMax: 1000, edgeW: 10, smallSize: 500 });
+  const T2 = tileFields(F2.frags, F2.fragGroup, { size: 1e6, bbox: { x0: 0, y0: 0, x1: 90000, y1: 60000 } });
+  let t0 = Date.now(); const n2 = figureSequence(T2.frags, T2.fragField, T2.fields, fieldSequence(T2.NX, T2.NY), { figOrder: 'nearest' });
+  ok(new Set(n2.seq).size === T2.frags.n, `shortest path on ${T2.frags.n} figures in ${Date.now() - t0} ms`);
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. order)');
+}
+{ // 10: follow-geometry order finishes each shape before the next
+  const { fieldSequence, figureSequence } = await import('../geom.js');
+  const rings = [R(0, 0, 3000, 3000), R(5000, 0, 8000, 3000)];
+  const { traps, nComp } = healAndFracture(rings, [1, 1]);
+  const F = fragmentForPEC(traps, nComp, { fragMax: 500, edgeW: 50, smallSize: 100 });
+  const T = tileFields(F.frags, F.fragGroup, { size: 1e5, bbox: { x0: 0, y0: 0, x1: 8000, y1: 3000 } });
+  const o = figureSequence(T.frags, T.fragField, T.fields, fieldSequence(T.NX, T.NY), { figOrder: 'shapes', start: 'tl' });
+  const comps = Array.from(o.seq, i => T.frags.comp[i]); let switches = 0; for (let k = 1; k < comps.length; k++) if (comps[k] !== comps[k - 1]) switches++;
+  ok(switches === 1, `follow geometry: one jump between the two pads (${switches})`);
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. follow geometry)');
+}

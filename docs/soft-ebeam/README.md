@@ -17,8 +17,8 @@ layout), or directly at `/?ebeam=1`.
 | Heal & Fracture | Union of overlapping shapes, cut into non-overlapping trapezoids (or staircase rectangles). |
 | PSF | Literature preset, manual α/β/η(/γ/ν), an in-browser Monte Carlo run, or an imported `.lpsf`/text PSF. A beam + process blur (FWHM) is added in quadrature. |
 | PEC | Fragments figures (edge strips + interior pieces, small shapes kept whole), solves doses, quantises to dose classes. |
-| Fields | Splits figures at write-field boundaries; meander field order. PEC is computed on the whole pattern first. |
-| Simulate | Exposes the corrected pattern with the PSF and draws the developed edge (threshold model), optionally next to the uniform-dose result. |
+| Fields & Order | Splits figures at write-field boundaries and sets the writing order: start corner, field traversal (meander/raster rows or columns, spiral from the centre) and figure order inside a field (shape by shape, raster, meander, shortest path, centre-out, outside-in, by dose). The **Write order** view colours figures first → last, draws the beam path and stage moves, and can play the exposure. Export writes the GDS in this order. PEC is computed on the whole pattern first. |
+| Simulate | Exposes the corrected pattern with the PSF and draws the developed edge (threshold model), optionally next to the uniform-dose result. A movable cross-section plots the energy profile and reports drawn vs developed widths with and without PEC. |
 | Export | GDSII with the dose class in the datatype, one layer per class, or the Raith convention (datatype = round(1000 × dose factor)); a dose table; dwell and beam-on time estimates. |
 
 Card colours follow the usual flow convention: orange = needs input, red = not run, green = done, grey = off.

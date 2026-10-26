@@ -486,6 +486,84 @@ export function tileFields(frags, fragGroup, opts) {
   return { frags: out.trim(), fragGroup: Int32Array.from(grp), fragField: Int32Array.from(fld), fields, order, NX, NY, X0, Y0, size };
 }
 
+// ── writing order ────────────────────────────────────────
+// start corner: 'bl' bottom-left, 'tl' top-left, 'br' bottom-right, 'tr' top-right
+// traversal: 'meanderX' (serpentine rows), 'meanderY' (serpentine columns), 'rasterX', 'rasterY', 'spiral' (from centre)
+export function fieldSequence(NX, NY, traversal = 'meanderX', start = 'bl') {
+  const fx = start === 'br' || start === 'tr', fy = start === 'tl' || start === 'tr';
+  const I = i => fx ? NX - 1 - i : i, J = j => fy ? NY - 1 - j : j, out = [];
+  if (traversal === 'spiral') {
+    const cx = (NX - 1) / 2, cy = (NY - 1) / 2, cells = [];
+    for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) cells.push([i, j]);
+    const ring = ([i, j]) => Math.max(Math.abs(i - cx), Math.abs(j - cy));
+    const ang = ([i, j]) => { let a = Math.atan2((j - cy) * (fy ? -1 : 1), (i - cx) * (fx ? -1 : 1)); return a < -Math.PI / 2 ? a + 2 * Math.PI : a; };
+    cells.sort((a, b) => (ring(a) - ring(b)) || (ang(a) - ang(b)));
+    return cells.map(([i, j]) => j * NX + i);
+  }
+  const rows = traversal === 'meanderX' || traversal === 'rasterX', meander = traversal.startsWith('meander');
+  const A = rows ? NY : NX, B = rows ? NX : NY;
+  for (let a = 0; a < A; a++) for (let b0 = 0; b0 < B; b0++) {
+    const b = meander && a % 2 ? B - 1 - b0 : b0;
+    out.push(rows ? J(a) * NX + I(b) : J(b) * NX + I(a));
+  }
+  return out;
+}
+
+// Figure order inside every field, fields visited in fieldSeq.
+// figOrder: 'shapes' (follow geometry), 'raster' | 'meander' (rows of height `band`), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
+export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null } = {}) {
+  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n); let hs = 0;
+  for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); hs += t[o + 1] - t[o]; }
+  const B = band > 0 ? band : Math.max(1, hs / Math.max(1, n)); // default row height = mean figure height
+  const sx = start === 'br' || start === 'tr' ? -1 : 1, sy = start === 'tl' || start === 'tr' ? -1 : 1;
+  const byField = new Map(); for (let i = 0; i < n; i++) { let a = byField.get(fragField[i]); if (!a) byField.set(fragField[i], a = []); a.push(i); }
+  const seq = new Int32Array(n); let p = 0;
+  for (const f of fieldSeq) {
+    const idx = byField.get(f); if (!idx) continue; const F = fields[f];
+    const row = i => Math.floor(sy * cy[i] / B);
+    if (figOrder === 'meander') { // alternate direction on the rank of occupied rows (rows may be sparse)
+      const rk = new Map(); [...new Set(idx.map(row))].sort((a, b) => a - b).forEach((r, k) => rk.set(r, k));
+      idx.sort((a, b) => (row(a) - row(b)) || (rk.get(row(a)) % 2 ? -1 : 1) * sx * (cx[a] - cx[b])); }
+    else if (figOrder === 'centerOut' || figOrder === 'outsideIn') { const mx = (F.x0 + F.x1) / 2, my = (F.y0 + F.y1) / 2, s = figOrder === 'centerOut' ? 1 : -1; idx.sort((a, b) => s * ((cx[a] - mx) ** 2 + (cy[a] - my) ** 2 - (cx[b] - mx) ** 2 - (cy[b] - my) ** 2) || (row(a) - row(b))); }
+    else if (figOrder === 'shapes') { // follow geometry: finish one shape before the next; shapes in rows by their lower edge
+      const cb = new Map(); for (const i of idx) { const c = frags.comp[i]; let q = cb.get(c); if (!q) cb.set(c, q = [Infinity, Infinity, -Infinity]); q[0] = Math.min(q[0], sx * cx[i]); q[1] = Math.min(q[1], sy * cy[i]); q[2] = Math.max(q[2], sy * cy[i]); }
+      const hs = [...cb.values()].map(q => q[2] - q[1]).sort((u, v) => u - v), Bc = Math.max(B, hs[Math.floor(hs.length / 2)] || B);
+      idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb); return (Math.floor(A[1] / Bc) - Math.floor(Q[1] / Bc)) || (A[0] - Q[0]) || (ca - cbb); } return (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
+    }
+    else if (figOrder === 'dose' && dose) idx.sort((a, b) => (dose[a] - dose[b]) || (row(a) - row(b)) || sx * (cx[a] - cx[b]));
+    else if (figOrder === 'nearest' && idx.length > 2) { nearestPath(idx, cx, cy, sx < 0 ? F.x1 : F.x0, sy < 0 ? F.y1 : F.y0); }
+    else idx.sort((a, b) => (row(a) - row(b)) || sx * (cx[a] - cx[b]));
+    for (const i of idx) seq[p++] = i;
+  }
+  // beam travel between consecutive figure centres
+  let travel = 0, jumpMax = 0, fieldJumps = 0;
+  for (let k = 1; k < p; k++) { const a = seq[k - 1], b = seq[k], d = Math.hypot(cx[b] - cx[a], cy[b] - cy[a]); travel += d; if (fragField[a] !== fragField[b]) fieldJumps++; else jumpMax = Math.max(jumpMax, d); }
+  return { seq, travel, jumpMax, fieldJumps };
+}
+
+// greedy nearest-neighbour tour (in place) starting near (x0,y0), using a bucket grid
+function nearestPath(idx, cx, cy, x0, y0) {
+  const n = idx.length; let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const i of idx) { minx = Math.min(minx, cx[i]); maxx = Math.max(maxx, cx[i]); miny = Math.min(miny, cy[i]); maxy = Math.max(maxy, cy[i]); }
+  const cs = Math.max(1e-6, Math.sqrt(((maxx - minx) || 1) * ((maxy - miny) || 1) / n) * 1.5), gx = Math.floor((maxx - minx) / cs) + 1, gy = Math.floor((maxy - miny) / cs) + 1;
+  const grid = new Map(), key = (a, b) => a * 1048576 + b;
+  for (const i of idx) { const k = key(Math.floor((cx[i] - minx) / cs), Math.floor((cy[i] - miny) / cs)); let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(i); }
+  const out = []; let px = x0, py = y0;
+  for (let step = 0; step < n; step++) {
+    const ci = Math.min(gx - 1, Math.max(0, Math.floor((px - minx) / cs))), cj = Math.min(gy - 1, Math.max(0, Math.floor((py - miny) / cs)));
+    let best = -1, bd = Infinity, bk = 0, bpos = 0;
+    const scan = (a, b) => { if (a < 0 || b < 0 || a >= gx || b >= gy) return; const k = key(a, b), L = grid.get(k); if (!L) return; for (let q = 0; q < L.length; q++) { const i = L[q], d = (cx[i] - px) ** 2 + (cy[i] - py) ** 2; if (d < bd) { bd = d; best = i; bk = k; bpos = q; } } };
+    for (let r = 0; r <= Math.max(gx, gy); r++) { // walk the perimeter of ring r only
+      if (!r) scan(ci, cj);
+      else { for (let a = ci - r; a <= ci + r; a++) { scan(a, cj - r); scan(a, cj + r); } for (let b = cj - r + 1; b <= cj + r - 1; b++) { scan(ci - r, b); scan(ci + r, b); } }
+      if (best >= 0 && Math.sqrt(bd) <= r * cs) break; // nothing in further rings can be closer
+    }
+    const L = grid.get(bk); L[bpos] = L[L.length - 1]; L.pop(); if (!L.length) grid.delete(bk);
+    out.push(best); px = cx[best]; py = cy[best];
+  }
+  for (let k = 0; k < n; k++) idx[k] = out[k];
+}
+
 // ── point-in-figures (for tests / hover) ─────────────────
 export function trapContains(t, o, x, y) {
   if (y < t[o] || y > t[o + 1]) return false;

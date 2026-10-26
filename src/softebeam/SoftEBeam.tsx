@@ -113,11 +113,26 @@ function DoseHist({ classDose, areas, lo, hi }) {
   }, [classDose, areas], 300, 100);
 }
 
+function ProfilePlot({ prof }) {
+  return usePlot((ctx, w, h) => {
+    const { row, rowU, x0, x1, p, drawn, thr } = prof, L = 30, Bm = 18, T = 6, Rm = 6, n = row.length;
+    let mx = thr * 1.4; for (const v of row) mx = Math.max(mx, v); if (rowU) for (const v of rowU) mx = Math.max(mx, v);
+    const X = x => L + (x - x0) / (x1 - x0) * (w - L - Rm), Y = v => T + (1 - v / mx) * (h - T - Bm);
+    ctx.fillStyle = 'rgba(100,116,139,.22)'; for (const d of drawn) { const a = Math.max(X(d[0]), L), b = Math.min(X(d[1]), w - Rm); if (b > a) ctx.fillRect(a, T, b - a, h - T - Bm); }
+    ctx.strokeStyle = '#e5e7eb'; ctx.fillStyle = C.mute; ctx.font = '9.5px system-ui';
+    for (let k = 0; k <= 4; k++) { const v = mx * k / 4, y = Y(v); ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - Rm, y); ctx.stroke(); ctx.fillText(v.toFixed(2), 2, y + 3); }
+    ctx.fillText('0', L, h - 5); const span = fmtLen(x1 - x0); ctx.fillText(span, w - Rm - ctx.measureText(span).width, h - 5);
+    ctx.strokeStyle = '#6b7385'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(L, Y(thr)); ctx.lineTo(w - Rm, Y(thr)); ctx.stroke(); ctx.setLineDash([]);
+    const line = (a, col, dash) => { ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.setLineDash(dash || []); ctx.beginPath(); for (let i = 0; i < n; i++) { const x = X(x0 + (i + 0.5) * p), y = Y(a[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); ctx.setLineDash([]); };
+    if (rowU) line(rowU, '#ef4444', [4, 3]); line(row, '#16a34a');
+  }, [prof], 300, 150);
+}
+
 // ── layout viewer ─────────────────────────────────────────
-function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onView }) {
+function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onView, cutY, fitTo }) {
   const wrap = useRef(null), cv = useRef(null), [size, setSize] = useState({ w: 600, h: 400 }), [tr, setTr] = useState({ x: 300, y: 200, s: 1 }), drag = useRef(null), [hover, setHover] = useState(null);
   useEffect(() => { const el = wrap.current; const ob = new ResizeObserver(([e]) => setSize({ w: Math.floor(e.contentRect.width), h: Math.floor(e.contentRect.height) })); ob.observe(el); return () => ob.disconnect(); }, []);
-  const fit = useCallback(() => { if (!bbox) return; const W = bbox.x1 - bbox.x0 || 1, H = bbox.y1 - bbox.y0 || 1, s = Math.min(size.w / W, size.h / H) * 0.88; setTr({ s, x: size.w / 2 - (bbox.x0 + W / 2) * s, y: size.h / 2 + (bbox.y0 + H / 2) * s }); }, [bbox, size]);
+  const fit = useCallback(() => { const b = fitTo || bbox; if (!b) return; const W = b.x1 - b.x0 || 1, H = b.y1 - b.y0 || 1, s = Math.min(size.w / W, size.h / H) * 0.88; setTr({ s, x: size.w / 2 - (b.x0 + W / 2) * s, y: size.h / 2 + (b.y0 + H / 2) * s }); }, [bbox, fitTo, size]);
   useEffect(() => { fit(); }, [fitKey, size.w > 0 && size.h > 0]);
   useEffect(() => { onView && onView({ x0: -tr.x / tr.s, x1: (size.w - tr.x) / tr.s, y0: (tr.y - size.h) / tr.s, y1: tr.y / tr.s }); }, [tr, size]);
   const { rings, traps, pec, fields, sim } = layers;
@@ -136,13 +151,28 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const v = E[j * nx + i], [r, g, b] = turbo(v / top), o = ((ny - 1 - j) * nx + i) * 4; im.data[o] = r; im.data[o + 1] = g; im.data[o + 2] = b; im.data[o + 3] = 255; }
     ctx.putImageData(im, 0, 0); return { c, top };
   }, [sim]);
+  // writing-order data + playback
+  const orderData = useMemo(() => {
+    if (!fields || !fields.seq) return null; const t = fields.frags.t, n = fields.frags.n, cx = new Float64Array(n), cy = new Float64Array(n), rank = new Int32Array(n);
+    for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); }
+    fields.seq.forEach((i, p) => { rank[i] = p; });
+    return { cx, cy, rank, seq: fields.seq, N: n };
+  }, [fields]);
+  const [playK, setPlayK] = useState(null), [playing, setPlaying] = useState(false), [dur, setDur] = useState(10), kRef = useRef(0);
+  useEffect(() => { setPlaying(false); setPlayK(null); }, [orderData]);
+  useEffect(() => {
+    if (!playing || !orderData) return; let raf, last = performance.now();
+    const step = now => { kRef.current += orderData.N * Math.min(0.1, (now - last) / 1000) / dur; last = now; if (kRef.current >= orderData.N) { setPlaying(false); setPlayK(null); return; } setPlayK(kRef.current); raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step); return () => cancelAnimationFrame(raf);
+  }, [playing, dur, orderData]);
+  const togglePlay = () => { if (!orderData) return; if (!playing && (playK == null || playK >= orderData.N)) kRef.current = 0; else kRef.current = playK || 0; setPlaying(p => !p); };
   // hover index
   const hoverIdx = useMemo(() => {
-    const src = pec && (view === 'dose' || view === 'fields' || view === 'sim') ? (view === 'fields' && fields ? fields : pec) : null; if (!src || !bbox) return null;
+    const src = pec && (view === 'dose' || view === 'fields' || view === 'order' || view === 'sim') ? ((view === 'fields' || view === 'order') && fields ? fields : pec) : null; if (!src || !bbox) return null;
     const cs = Math.max((bbox.x1 - bbox.x0), (bbox.y1 - bbox.y0)) / 200 || 1, map = new Map(), t = src.frags.t;
     for (let i = 0; i < src.frags.n; i++) { const o = i * 6; const gx0 = Math.floor(Math.min(t[o + 2], t[o + 4]) / cs), gx1 = Math.floor(Math.max(t[o + 3], t[o + 5]) / cs), gy0 = Math.floor(t[o] / cs), gy1 = Math.floor(t[o + 1] / cs); if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > 400) continue; for (let x = gx0; x <= gx1; x++) for (let y = gy0; y <= gy1; y++) { const k = x + ',' + y; let a = map.get(k); if (!a) map.set(k, a = []); a.push(i); } }
     return { cs, map, src };
-  }, [pec, fields, view, bbox]);
+  }, [pec, fields, view, bbox, orderData]);
 
   useEffect(() => {
     const c = cv.current; if (!c) return; const dpr = window.devicePixelRatio || 1; c.width = size.w * dpr; c.height = size.h * dpr;
@@ -171,17 +201,34 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       if (overlays.order) { ctx.strokeStyle = 'rgba(194,65,12,.6)'; ctx.lineWidth = 1.5; ctx.beginPath(); ord.forEach((f, k) => { const F = fields.fields[f], x = X((F.x0 + F.x1) / 2), y = Y((F.y0 + F.y1) / 2); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
       ctx.fillStyle = C.beam; ctx.font = 'bold 11px system-ui'; ord.forEach((f, k) => { const F = fields.fields[f]; if ((F.x1 - F.x0) * s > 26) ctx.fillText(String(k + 1), X(F.x0) + 4, Y(F.y1) + 13); });
     }
+    if (view === 'order' && fields && orderData) {
+      const t = fields.frags.t, { seq, N, cx, cy } = orderData, K = playK == null ? N : Math.min(N, Math.floor(playK)), NB = 48;
+      if (K < N) { ctx.beginPath(); for (let p = K; p < N; p++) { const o = seq[p] * 6; if (visible(t, o)) trapPath(t, o); } ctx.fillStyle = '#dfe3e9'; ctx.fill(); }
+      for (let b = 0; b < NB; b++) { const a0 = Math.floor(b * N / NB), a1 = Math.min(K, Math.floor((b + 1) * N / NB)); if (a0 >= K) break; ctx.beginPath(); for (let p = a0; p < a1; p++) { const o = seq[p] * 6; if (visible(t, o)) trapPath(t, o); } ctx.fillStyle = rgb(turbo(0.06 + 0.88 * b / (NB - 1))); ctx.fill(); }
+      if (fields.fieldsOn) { ctx.strokeStyle = 'rgba(194,65,12,.55)'; ctx.lineWidth = 1; ctx.setLineDash([5, 3]); for (const f of fields.fields) ctx.strokeRect(X(f.x0), Y(f.y1), (f.x1 - f.x0) * s, (f.y1 - f.y0) * s); ctx.setLineDash([]); }
+      if (overlays.path && K > 1) {
+        const stp = Math.max(1, Math.ceil(N / 40000)), ff = fields.fragField; ctx.strokeStyle = 'rgba(17,24,39,.6)'; ctx.lineWidth = 0.9; ctx.beginPath();
+        let pf = -1; for (let p = 0; p < K; p += stp) { const i = seq[p], x = X(cx[i]), y = Y(cy[i]); if (p && ff[i] === pf) ctx.lineTo(x, y); else ctx.moveTo(x, y); pf = ff[i]; } ctx.stroke();
+        ctx.strokeStyle = 'rgba(194,65,12,.9)'; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath();
+        for (let p = 1; p < K; p++) { const a = seq[p - 1], b2 = seq[p]; if (ff[a] !== ff[b2]) { ctx.moveTo(X(cx[a]), Y(cy[a])); ctx.lineTo(X(cx[b2]), Y(cy[b2])); } } ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (fields.fieldsOn && overlays.order) { const used = new Set(fields.fragField), ord = fields.fieldSeq.filter(f => used.has(f)); ctx.fillStyle = C.beam; ctx.font = 'bold 11px system-ui'; ord.forEach((f, k) => { const F = fields.fields[f]; if ((F.x1 - F.x0) * s > 26) ctx.fillText(`F${k + 1}`, X(F.x0) + 4, Y(F.y1) + 13); }); }
+      const dot = (i, col, r) => { ctx.beginPath(); ctx.arc(X(cx[i]), Y(cy[i]), r, 0, 2 * Math.PI); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); };
+      dot(seq[0], '#16a34a', 5); ctx.fillStyle = '#16a34a'; ctx.font = 'bold 11px system-ui'; ctx.fillText('start', X(cx[seq[0]]) + 7, Y(cy[seq[0]]) - 6);
+      if (K > 0 && K < N) { const i = seq[K - 1], x = X(cx[i]), y = Y(cy[i]); ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.moveTo(x, y - 9); ctx.lineTo(x, y + 9); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI); ctx.stroke(); }
+    }
     if (view === 'sim' && sim && simImg) {
       ctx.imageSmoothingEnabled = true; ctx.drawImage(simImg.c, X(sim.x0), Y(sim.y0 + sim.ny * sim.pitch), sim.nx * sim.pitch * s, sim.ny * sim.pitch * s);
       drawTraps(traps || (pec && pec.frags), null, 'rgba(255,255,255,.7)', 0.8);
-      const seg = (a, col, dash) => { if (!a) return; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash(dash || []); ctx.beginPath(); for (let i = 0; i < a.length; i += 4) { ctx.moveTo(X(a[i]), Y(a[i + 1])); ctx.lineTo(X(a[i + 2]), Y(a[i + 3])); } ctx.stroke(); ctx.setLineDash([]); };
+      const seg = (a, col, dash) => { if (!a) return; ctx.strokeStyle = col; ctx.lineWidth = 1.3; ctx.setLineDash(dash || []); ctx.beginPath(); for (let i = 0; i < a.length; i += 4) { ctx.moveTo(X(a[i]), Y(a[i + 1])); ctx.lineTo(X(a[i + 2]), Y(a[i + 3])); } ctx.stroke(); ctx.setLineDash([]); };
       seg(sim.segU, '#ff4d4d', [5, 4]); seg(sim.seg, '#00e676');
+      if (cutY != null) { const y = Y(cutY); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.setLineDash([8, 4]); ctx.beginPath(); ctx.moveTo(X(sim.x0), y); ctx.lineTo(X(sim.x0 + sim.nx * sim.pitch), y); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.font = '11px system-ui'; ctx.fillText('cross-section', X(sim.x0) + 4, y - 5); }
     }
     if (simBox) { ctx.strokeStyle = C.beam; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.strokeRect(X(simBox.x0), Y(simBox.y1), (simBox.x1 - simBox.x0) * s, (simBox.y1 - simBox.y0) * s); ctx.setLineDash([]); }
     // scale bar
     const target = 120 / s, p10 = 10 ** Math.floor(Math.log10(target)), nice = [1, 2, 5, 10].map(k => k * p10).filter(v => v <= target).pop() || p10;
     ctx.fillStyle = C.ink; ctx.fillRect(14, size.h - 18, nice * s, 3); ctx.font = '11px system-ui'; ctx.fillText(fmtLen(nice), 14, size.h - 23);
-  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox]);
+  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox, orderData, playK, cutY]);
 
   const toNm = e => { const r = cv.current.getBoundingClientRect(); return [(e.clientX - r.left - tr.x) / tr.s, (tr.y - (e.clientY - r.top)) / tr.s]; };
   const onDown = e => { const [x, y] = toNm(e); drag.current = { sx: e.clientX, sy: e.clientY, tx: tr.x, ty: tr.y, box: e.shiftKey ? [x, y] : null }; };
@@ -190,7 +237,7 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     if (d && d.box) { setSimBox({ x0: Math.min(d.box[0], x), x1: Math.max(d.box[0], x), y0: Math.min(d.box[1], y), y1: Math.max(d.box[1], y) }); return; }
     if (d) { setTr(t => ({ ...t, x: d.tx + e.clientX - d.sx, y: d.ty + e.clientY - d.sy })); return; }
     let info = { x, y };
-    if (hoverIdx) { const a = hoverIdx.map.get(Math.floor(x / hoverIdx.cs) + ',' + Math.floor(y / hoverIdx.cs)); if (a) { const t = hoverIdx.src.frags.t; for (const i of a) { const o = i * 6; if (y < t[o] || y > t[o + 1]) continue; const f = (y - t[o]) / ((t[o + 1] - t[o]) || 1); if (x >= t[o + 2] + (t[o + 4] - t[o + 2]) * f && x <= t[o + 3] + (t[o + 5] - t[o + 3]) * f) { const g = hoverIdx.src.fragGroup[i], c = pec.cls[g]; info = { ...info, dose: pec.dose[g], cls: c, cd: pec.classDose[c], field: hoverIdx.src.fragField ? hoverIdx.src.fragField[i] : null }; break; } } } }
+    if (hoverIdx) { const a = hoverIdx.map.get(Math.floor(x / hoverIdx.cs) + ',' + Math.floor(y / hoverIdx.cs)); if (a) { const t = hoverIdx.src.frags.t; for (const i of a) { const o = i * 6; if (y < t[o] || y > t[o + 1]) continue; const f = (y - t[o]) / ((t[o + 1] - t[o]) || 1); if (x >= t[o + 2] + (t[o + 4] - t[o + 2]) * f && x <= t[o + 3] + (t[o + 5] - t[o + 3]) * f) { const g = hoverIdx.src.fragGroup[i], c = pec.cls[g]; info = { ...info, dose: pec.dose[g], cls: c, cd: pec.classDose[c], field: hoverIdx.src.fragField ? hoverIdx.src.fragField[i] : null, rank: view === 'order' && orderData ? orderData.rank[i] : null }; break; } } } }
     if (view === 'sim' && sim) { const i = Math.floor((x - sim.x0) / sim.pitch), j = Math.floor((y - sim.y0) / sim.pitch); if (i >= 0 && j >= 0 && i < sim.nx && j < sim.ny) info.E = sim.E[j * sim.nx + i]; }
     setHover(info);
   };
@@ -199,8 +246,21 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
   return <div ref={wrap} style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
     <canvas ref={cv} style={{ width: size.w, height: size.h, display: 'block', cursor: drag.current ? 'grabbing' : 'crosshair' }} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; setHover(null); }} onWheel={onWheel} onDoubleClick={fit} />
     <div style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 11, color: C.ink, background: 'rgba(255,255,255,.9)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '4px 8px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' }}>
-      {hover ? <>x {fmtLen(hover.x)} · y {fmtLen(hover.y)}{hover.cls != null && <> · class {hover.cls} · dose ×{hover.cd.toFixed(3)} <span style={{ color: C.mute }}>(exact ×{hover.dose.toFixed(3)})</span></>}{hover.field != null && <> · field {hover.field}</>}{hover.E != null && <> · E {hover.E.toFixed(3)}</>}</> : 'drag to pan · wheel to zoom · double-click to fit · shift-drag = simulation box'}
+      {hover ? <>x {fmtLen(hover.x)} · y {fmtLen(hover.y)}{hover.cls != null && <> · class {hover.cls} · dose ×{hover.cd.toFixed(3)} <span style={{ color: C.mute }}>(exact ×{hover.dose.toFixed(3)})</span></>}{hover.rank != null && <> · written <b>#{hover.rank + 1}</b> of {orderData.N}</>}{hover.field != null && <> · field {hover.field}</>}{hover.E != null && <> · E {hover.E.toFixed(3)}</>}</> : 'drag to pan · wheel to zoom · double-click to fit · shift-drag = simulation box'}
     </div>
+    {view === 'order' && orderData && <div style={{ position: 'absolute', left: 10, top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,.94)', border: `1px solid ${C.line}`, borderRadius: 6, padding: '6px 10px', fontSize: 11.5 }}>
+      <button onClick={togglePlay} title={playing ? 'Pause' : 'Play the exposure'} style={{ ...inp, cursor: 'pointer', fontWeight: 700, minWidth: 64, background: C.accent, color: '#fff', borderColor: C.accent }}>{playing ? '⏸ Pause' : '▶ Play'}</button>
+      <button onClick={() => { setPlaying(false); kRef.current = 0; setPlayK(0); }} title="Back to start" style={{ ...inp, cursor: 'pointer' }}>⏮</button>
+      <input type="range" min={0} max={orderData.N} step={1} value={playK == null ? orderData.N : Math.floor(playK)} onChange={e => { setPlaying(false); const v = +e.target.value; kRef.current = v; setPlayK(v >= orderData.N ? null : v); }} style={{ flex: 1, minWidth: 80 }} />
+      <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtN(playK == null ? orderData.N : Math.floor(playK))} / {fmtN(orderData.N)} figures</span>
+      <select value={dur} onChange={e => setDur(+e.target.value)} style={inp} title="Playback duration">{[5, 10, 30, 60, 120].map(d => <option key={d} value={d}>{d} s</option>)}</select>
+    </div>}
+    {view === 'order' && orderData && <div style={{ position: 'absolute', left: 10, bottom: 34, background: 'rgba(255,255,255,.92)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '5px 8px', fontSize: 11 }}>
+      <div style={{ color: C.mute, marginBottom: 3 }}>writing order</div>
+      <div style={{ width: 160, height: 10, background: `linear-gradient(90deg, ${[0.06, .3, .5, .7, .94].map(t => rgb(turbo(t))).join(',')})`, borderRadius: 2 }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>first</span><span>last</span></div>
+      <div style={{ marginTop: 3 }}><span style={{ color: '#16a34a', fontWeight: 700 }}>●</span> start {overlays.path && <><span style={{ marginLeft: 6 }}>─</span> beam path <span style={{ color: C.beam, marginLeft: 6 }}>┅</span> stage move</>}</div>
+    </div>}
     {(view === 'dose' || view === 'fields') && pec && <div style={{ position: 'absolute', left: 10, bottom: 34, background: 'rgba(255,255,255,.92)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '5px 8px', fontSize: 11 }}>
       <div style={{ color: C.mute, marginBottom: 3 }}>relative dose</div>
       <div style={{ width: 160, height: 10, background: `linear-gradient(90deg, ${[0, .25, .5, .75, 1].map(t => rgb(turbo(t))).join(',')})`, borderRadius: 2 }} />
@@ -223,11 +283,12 @@ const MODULES = [
   { id: 'fracture', icon: '◩', name: 'Heal & Fracture', what: 'Merge overlapping shapes (union) and cut them into non-overlapping trapezoids.' },
   { id: 'psf', icon: '⊙', name: 'PSF', what: 'Point-spread function: how energy spreads around the beam. From literature presets, your own α/β/η, a Monte Carlo run, or an imported file.', side: true },
   { id: 'pec', icon: '⚖', name: 'PEC', what: 'Proximity effect correction: split figures near edges and assign each piece a dose so that every edge receives the same energy.' },
-  { id: 'fields', icon: '▦', name: 'Fields', what: 'Split figures at write-field boundaries and order the fields (meander).' },
+  { id: 'fields', icon: '▦', name: 'Fields & Order', what: 'Split figures at write-field boundaries and choose the writing order: how the stage visits the fields, and in which order the beam writes the figures inside each field.' },
   { id: 'sim', icon: '◍', name: 'Simulate', what: 'Expose the corrected pattern with the PSF and show the developed edge (threshold model).', side: true },
   { id: 'export', icon: '📤', name: 'Export', what: 'Write GDSII with dose classes, a dose table, and estimate dwell and write time.' },
 ];
 const STAGES = ['import', 'fracture', 'pec', 'fields'];
+const FIG_ORDERS = [['shapes', 'Shape by shape (follow geometry)'], ['raster', 'Raster rows (like reading)'], ['meander', 'Meander rows (serpentine)'], ['nearest', 'Shortest path (fewest long jumps)'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
 const stageOf = id => ({ import: 'import', extract: 'import', bias: 'import', fracture: 'fracture', psf: 'pec', pec: 'pec', fields: 'fields', sim: 'pec', export: 'pec' })[id];
 
 const DEFAULTS = {
@@ -238,7 +299,7 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox',
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes',
   simPitch: 0, simThr: 0.5, simCompare: true,
   expMode: 'datatype', layerKeep: true, layerOut: 1, layerBase: 100, cellPerField: false, baseDose: 300, current: 1, bss: 10, minDwell: 20, fileName: 'softebeam',
 };
@@ -258,10 +319,11 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   const [status, setStatus] = useState('Open a GDS/OASIS file or send a layout from the editor.');
   const [err, setErr] = useState({});
   const [view, setView] = useState('layout');
-  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true });
+  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true });
   const [simBox, setSimBox] = useState(null);
   const [viewWin, setViewWin] = useState(null);
-  const [fitKey, setFitKey] = useState(0);
+  const [cutFrac, setCutFrac] = useState(0.5);
+  const [fitKey, setFitKey] = useState(0), [fitTo, setFitTo] = useState(null);
   const [psfData, setPsfData] = useState(psfGet); // {r,f,f0,r0,label,fit,g2,info} — persisted
   useEffect(() => { psfSet(psfData); }, [psfData]);
   const mcRef = useRef(null);
@@ -332,7 +394,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     try {
       if (st === 'import') {
         const r = await call('import', { top: P.top, layers: P.layers, window: P.region === 'custom' ? P.win : null, maxPolys: P.maxPolys, bias: P.biasOn ? +P.bias || 0 : 0 });
-        setRes({ import: r }); if (r.bbox) setFitKey(k => k + 1); setView('layout');
+        setRes({ import: r }); if (r.bbox) { setFitTo(null); setFitKey(k => k + 1); } setView('layout');
         setStatus(`Imported ${fmtN(r.nRings)} shapes${r.truncated ? ` (stopped at ${fmtN(P.maxPolys)} — select a region or fewer layers)` : ''}.`);
       } else if (st === 'fracture') {
         const r = await call('fracture', { mode: P.fracMode, rectStep: P.rectStep });
@@ -344,8 +406,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         setRes(x => ({ import: x.import, fracture: x.fracture, pec: r })); setView('dose');
         setStatus(r.corrected ? `PEC: ${fmtN(r.nFrags)} figures, ${fmtN(r.nGroups)} dose groups, ${r.nClasses} classes; converged to ${pct(r.maxErr)} in ${r.iters} iterations.` : `Dose 1.0 assigned to ${fmtN(r.nFrags)} figures (PEC off).`);
       } else if (st === 'fields') {
-        if (!P.fieldsOn) { setRes(x => { const n = { ...x }; delete n.fields; return n; }); }
-        else { const r = await call('fields', { size: P.fieldUm * 1000, originMode: P.origin }); setRes(x => ({ ...x, fields: r })); setView('fields'); setStatus(`${r.NX}×${r.NY} fields of ${P.fieldUm} µm, ${fmtN(r.n)} figures after field splitting.`); }
+        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder });
+        setRes(x => ({ ...x, fields: r })); setView('order');
+        setStatus(`${P.fieldsOn ? `${r.NX}×${r.NY} fields of ${P.fieldUm} µm, ` : ''}${fmtN(r.n)} figures; beam travel ${fmtLen(r.travel)}. Press ▶ in the viewer to watch the writing order.`);
       }
       setDone({ ...doneRef.current, [st]: true });
       setStatus(s => `${s}  (${((performance.now() - t0) / 1000).toFixed(2)} s)`);
@@ -369,13 +432,13 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     setRunning('sim'); setStatus('Simulating exposure…');
     try {
       const r = await call('sim', { win, pitch, thr: P.simThr, psf: psfActive, uniform: false });
-      if (P.simCompare && P.pecOn) { const u = await call('sim', { win, pitch, thr: P.simThr, psf: psfActive, uniform: true }); r.segU = u.seg; }
-      setRes(x => ({ ...x, sim: r })); setView('sim'); setStatus(`Simulated ${r.nx}×${r.ny} px at ${fmtLen(r.pitch)} pitch.`);
+      if (P.simCompare && P.pecOn) { const u = await call('sim', { win, pitch, thr: P.simThr, psf: psfActive, uniform: true }); r.segU = u.seg; r.EU = u.E; }
+      setRes(x => ({ ...x, sim: r })); setView('sim'); setFitTo({ x0: win.x0, y0: win.y0, x1: win.x1, y1: win.y1 }); setFitKey(k => k + 1); setStatus(`Simulated ${r.nx}×${r.ny} px at ${fmtLen(r.pitch)} pitch.`);
     } catch (e) { setStatus('⚠ Simulation: ' + e.message); }
     setRunning(null);
   };
   const doExport = async () => {
-    if (!(await runTo(P.fieldsOn ? 'fields' : 'pec'))) return;
+    if (!(await runTo('fields'))) return;
     setRunning('export');
     try {
       const r = await call('export', { opts: { mode: P.expMode, layerOut: P.layerKeep ? null : +P.layerOut, layerBase: +P.layerBase, cellPerField: P.fieldsOn && P.cellPerField, useFields: P.fieldsOn, dbuNm: 1, libName: 'SOFTEBEAM', top: (P.top || 'TOP').slice(0, 32) }, baseDose: +P.baseDose || null });
@@ -427,7 +490,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'fracture': return !meta ? 'unset' : done.fracture ? 'done' : 'ready';
       case 'psf': return psfActive ? 'done' : 'unset';
       case 'pec': return !psfActive ? 'unset' : done.pec ? 'done' : 'ready';
-      case 'fields': return !P.fieldsOn ? 'off' : done.fields ? 'done' : 'ready';
+      case 'fields': return done.fields ? 'done' : 'ready';
       case 'sim': return res.sim ? 'done' : 'ready';
       default: return meta ? 'ready' : 'unset';
     }
@@ -441,7 +504,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'fracture': return r.fracture ? `${fmtN(r.fracture.n)} trapezoids` : P.fracMode === 'rect' ? 'rectangles' : 'trapezoids';
       case 'psf': return psfSummary ? `${P.psfMode === 'preset' ? (PSF_PRESETS.find(x => x.id === P.presetId) || {}).label : P.psfMode === 'manual' ? 'manual α/β/η' : (psfData && psfData.label) || ''}` : 'not defined';
       case 'pec': return r.pec ? (r.pec.corrected ? `${r.pec.nClasses} classes · ×${r.pec.classDose[1].toFixed(2)}–×${r.pec.classDose[r.pec.nClasses].toFixed(2)}` : 'uniform dose') : P.pecOn ? `edge eq. ${Math.round(P.mix * 100)}% · ${P.classMode === 'accuracy' ? `${(P.acc * 100).toFixed(1)}% steps` : `${P.nClasses} classes`}` : 'off (dose 1.0)';
-      case 'fields': return P.fieldsOn ? (r.fields ? `${r.fields.NX}×${r.fields.NY} × ${P.fieldUm} µm` : `${P.fieldUm} µm fields`) : 'off';
+      case 'fields': return `${P.fieldsOn ? (r.fields ? `${r.fields.NX}×${r.fields.NY} × ${P.fieldUm} µm` : `${P.fieldUm} µm fields`) : 'no field split'} · ${(FIG_ORDERS.find(o => o[0] === P.figOrder) || [, ''])[1].split(' (')[0].toLowerCase()}`;
       case 'sim': return r.sim ? `${r.sim.nx}×${r.sim.ny} px` : 'threshold model';
       case 'export': return { datatype: 'GDS · datatype = class', layer: 'GDS · layer per class', raith: 'GDS · Raith (DT = 1000·DF)' }[P.expMode];
       default: return '';
@@ -456,6 +519,23 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     return { A, Q, t: Q * 1e-6 / (P.current * 1e-9), tmin, tmax };
   }, [pecR, P.baseDose, P.bss, P.current]);
   const layerList = meta ? meta.layers : [];
+  // cross-section through the simulation: energy profiles + drawn vs developed widths
+  const profile = useMemo(() => {
+    const sm = res.sim; if (!sm) return null; const thr = P.simThr, nx = sm.nx, p = sm.pitch;
+    const j = Math.min(sm.ny - 1, Math.max(0, Math.floor(cutFrac * sm.ny))), y = sm.y0 + (j + 0.5) * p, xs = i => sm.x0 + (i + 0.5) * p;
+    const row = sm.E.subarray(j * nx, (j + 1) * nx), rowU = sm.EU ? sm.EU.subarray(j * nx, (j + 1) * nx) : null;
+    const devSegs = a => { const out = []; let st = null; for (let i = 0; i < nx; i++) { const v = a[i], pv = i ? a[i - 1] : 0; if (pv < thr && v >= thr) st = i ? xs(i - 1) + (thr - pv) / (v - pv) * p : xs(0); if (pv >= thr && v < thr && st != null) { out.push([st, xs(i - 1) + (pv - thr) / (pv - v) * p]); st = null; } } if (st != null) out.push([st, xs(nx - 1)]); return out; };
+    const wx0 = sm.x0, wx1 = sm.x0 + nx * p, drawn = [], tr = res.fracture && res.fracture.traps;
+    if (tr) { const t = tr.t; const iv = []; for (let i = 0; i < tr.n; i++) { const o = i * 6; if (y < t[o] || y > t[o + 1]) continue; const f = (y - t[o]) / ((t[o + 1] - t[o]) || 1); iv.push([t[o + 2] + (t[o + 4] - t[o + 2]) * f, t[o + 3] + (t[o + 5] - t[o + 3]) * f]); }
+      iv.sort((a, b) => a[0] - b[0]); for (const v of iv) { const L = drawn[drawn.length - 1]; if (L && v[0] <= L[1] + 1e-6) L[1] = Math.max(L[1], v[1]); else drawn.push([...v]); } }
+    const inside = drawn.filter(d => d[0] > wx0 + 2 * p && d[1] < wx1 - 2 * p); // skip features cut by the window edge
+    const match = segs => inside.map(d => { let best = null, bo = 0; for (const g of segs) { const o = Math.min(d[1], g[1]) - Math.max(d[0], g[0]); if (o > bo) { bo = o; best = g; } } return best ? best[1] - best[0] : 0; });
+    const dev = devSegs(row), devU = rowU ? devSegs(rowU) : null;
+    const med = a => { const b = a.filter(v => v > 0).sort((x, z) => x - z); return b.length ? b[Math.floor(b.length / 2)] : null; };
+    const wD = inside.map(d => d[1] - d[0]), wP = match(dev), wU = devU ? match(devU) : null;
+    const err = wP.map((w, k) => w - wD[k]);
+    return { y, row, rowU, x0: wx0, x1: wx1, p, drawn, inside: inside.length, medD: med(wD), medP: med(wP), medU: wU && med(wU), lostU: wU ? wU.filter(v => !v).length : 0, lostP: wP.filter(v => !v).length, maxErr: err.length ? Math.max(...err.map(Math.abs)) : null, thr };
+  }, [res.sim, res.fracture, cutFrac, P.simThr]);
   const panel = () => {
     switch (sel) {
       case 'import': return <>
@@ -561,17 +641,39 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'fields': return <>
         <Chk label="Split into write fields" checked={P.fieldsOn} onChange={v => set('fields', 'fieldsOn', v)} />
         {P.fieldsOn && <><Num label="Field size" unit="µm" value={P.fieldUm} onChange={v => set('fields', 'fieldUm', v)} />
-          <Sel label="Placement" value={P.origin} onChange={v => set('fields', 'origin', v)} options={[['bbox', 'Start at pattern corner'], ['center', 'Centred on pattern'], ['origin', 'Grid through (0,0)']]} />
-          <Chk label="show writing order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />
-          {res.fields && <><KV k="Fields" v={`${res.fields.NX} × ${res.fields.NY} (${new Set(res.fields.fragField).size} used)`} /><KV k="Figures after splitting" v={fmtN(res.fields.n)} /></>}</>}
-        <Note>PEC runs on the whole pattern before field splitting, so backscatter from neighbouring fields is included.</Note>
+          <Sel label="Placement" value={P.origin} onChange={v => set('fields', 'origin', v)} options={[['bbox', 'Start at pattern corner'], ['center', 'Centred on pattern'], ['origin', 'Grid through (0,0)']]} /></>}
+        <Sec title="Writing order">
+          <Sel label="Start corner" value={P.start} onChange={v => set('fields', 'start', v)} options={[['tl', 'Top-left (top → bottom)'], ['bl', 'Bottom-left (bottom → top)'], ['tr', 'Top-right'], ['br', 'Bottom-right']]} w={180} />
+          {P.fieldsOn && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
+          <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
+          <div style={{ display: 'flex', gap: 10 }}><Chk label="beam path" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
+        </Sec>
+        {res.fields && <Sec title="Result">
+          {res.fields.fieldsOn && <KV k="Fields" v={`${res.fields.NX} × ${res.fields.NY} (${new Set(res.fields.fragField).size} used)`} />}
+          <KV k="Figures" v={fmtN(res.fields.n)} /><KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} /><KV k="Longest jump inside a field" v={fmtLen(res.fields.jumpMax)} />{res.fields.fieldsOn && <KV k="Stage moves between fields" v={res.fields.fieldJumps} />}
+          <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>
+        </Sec>}
+        <Note>The viewer's <b>Write order</b> tab colours figures from first (blue) to last (red) and can play the exposure. Export writes the GDS in this order. PEC runs on the whole pattern before field splitting, so backscatter from neighbouring fields is included. Some tools re-sort figures themselves.</Note>
       </>;
       case 'sim': return <>
         <Num label="Pixel" unit="nm" value={P.simPitch} onChange={v => up('simPitch', v)} hint="0 = automatic (α/2, capped by window size)" />
         <Num label="Threshold" value={P.simThr} step={0.05} onChange={v => up('simThr', v)} hint="0.5 = edge of a large pad at base dose" />
         <Chk label="Also show uniform dose (no PEC)" checked={P.simCompare} onChange={v => up('simCompare', v)} />
         <div style={{ display: 'flex', gap: 6, margin: '6px 0' }}><Btn primary onClick={runSim} disabled={!!running}>▶ Simulate {simBox ? 'box' : 'view'}</Btn>{simBox && <Btn onClick={() => setSimBox(null)}>Clear box</Btn>}</div>
-        <Note>Zoom the viewer to the area of interest (or shift-drag a box) and run. The green line is where the resist develops with the PEC doses; the red dashed line is the same pattern written at uniform dose.</Note>
+        <Note>Zoom the viewer to the area of interest (or shift-drag a box) and run. The green line is where the resist develops with the PEC doses; the red dashed line is the same pattern written at uniform dose (no PEC).</Note>
+        {profile && <Sec title="Cross-section">
+          <label style={{ fontSize: 12, color: C.mute, display: 'block' }}>Cut position (bottom → top of the simulated area)</label>
+          <input type="range" min={0} max={1} step={0.002} value={cutFrac} onChange={e => setCutFrac(+e.target.value)} style={{ width: '100%' }} />
+          <ProfilePlot prof={profile} />
+          <div style={{ fontSize: 10.5, color: C.mute, margin: '3px 0 6px' }}>absorbed energy along the cut · <span style={{ color: '#16a34a' }}>━</span> with PEC {profile.rowU && <><span style={{ color: '#ef4444' }}>┅</span> uniform dose</>} · <span>┄</span> threshold · grey bars = drawn shapes</div>
+          {profile.inside ? <>
+            <KV k="Features crossed" v={profile.inside} />
+            <KV k="Drawn width (median)" v={fmtLen(profile.medD)} />
+            <KV k="Developed with PEC" v={profile.medP != null ? fmtLen(profile.medP) : 'does not develop'} tone={C.ok} />
+            {profile.rowU && <KV k="Developed without PEC" v={profile.medU != null ? `${fmtLen(profile.medU)}${profile.lostU ? ` · ${profile.lostU} missing` : ''}` : 'does not develop'} tone={C.bad} />}
+            {profile.maxErr != null && <KV k="Worst width error with PEC" v={fmtLen(profile.maxErr)} />}
+          </> : <Note>The cut line does not cross a complete shape — move it with the slider.</Note>}
+        </Sec>}
       </>;
       case 'export': return <>
         <Sel label="Format" value={P.expMode} onChange={v => up('expMode', v)} options={[['datatype', 'GDSII · datatype = dose class'], ['layer', 'GDSII · one layer per class'], ['raith', 'GDSII · Raith (DT = 1000 × dose)']]} w={200} />
@@ -594,11 +696,11 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   };
 
   useEffect(() => { // fall back to the newest stage that still has data
-    const has = { layout: !!res.import, fractured: !!res.fracture, dose: !!res.pec, fields: !!res.fields, sim: !!res.sim };
-    if (!has[view]) { const f = ['fields', 'dose', 'fractured', 'layout'].find(v => has[v]); if (f) setView(f); }
+    const has = { layout: !!res.import, fractured: !!res.fracture, dose: !!res.pec, fields: !!res.fields, order: !!res.fields, sim: !!res.sim };
+    if (!has[view]) { const f = ['order', 'dose', 'fractured', 'layout'].find(v => has[v]); if (f) setView(f); }
   }, [res, view]);
   const mod = MODULES.find(m => m.id === sel);
-  const viewTabs = [['layout', 'Layout', !!res.import], ['fractured', 'Fractured', !!res.fracture], ['dose', 'Dose', !!res.pec], ['fields', 'Fields', !!res.fields], ['sim', 'Simulation', !!res.sim]];
+  const viewTabs = [['layout', 'Layout', !!res.import], ['fractured', 'Fractured', !!res.fracture], ['dose', 'Dose', !!res.pec], ['fields', 'Fields', !!res.fields], ['order', 'Write order', !!res.fields], ['sim', 'Simulation', !!res.sim]];
   return <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: C.bg, color: C.ink, fontFamily: 'system-ui,-apple-system,"Segoe UI",sans-serif', fontSize: 12.5 }}>
     {/* top bar */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#fff', borderBottom: `1px solid ${C.line}`, flexWrap: 'wrap' }}>
@@ -639,9 +741,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         <div style={{ display: 'flex', gap: 4, padding: '6px 10px', background: '#fff', borderBottom: `1px solid ${C.line}`, alignItems: 'center' }}>
           {viewTabs.map(([id, l, ok]) => <button key={id} disabled={!ok} onClick={() => setView(id)} style={{ ...inp, cursor: ok ? 'pointer' : 'default', background: view === id ? C.accent : '#fff', color: view === id ? '#fff' : ok ? C.ink : '#b8bec8', borderColor: view === id ? C.accent : C.line }}>{l}</button>)}
           <div style={{ flex: 1 }} />
-          <Btn small onClick={() => setFitKey(k => k + 1)}>⌖ Fit</Btn>
+          <Btn small onClick={() => { setFitTo(null); setFitKey(k => k + 1); }}>⌖ Fit</Btn>
         </div>
-        {meta ? <Viewer layers={{ rings: res.import, traps: res.fracture && res.fracture.traps, pec: res.pec, fields: res.fields, sim: res.sim }} view={view} overlays={overlays} bbox={res.import && res.import.bbox} fitKey={fitKey} simBox={simBox} setSimBox={setSimBox} onView={setViewWin} />
+        {meta ? <Viewer layers={{ rings: res.import, traps: res.fracture && res.fracture.traps, pec: res.pec, fields: res.fields, sim: res.sim }} view={view} overlays={overlays} bbox={res.import && res.import.bbox} fitKey={fitKey} fitTo={fitTo} simBox={simBox} setSimBox={setSimBox} onView={setViewWin} cutY={view === 'sim' && profile ? profile.y : null} />
           : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: C.mute }}>
             <div style={{ fontSize: 40 }}>⚡</div><div style={{ fontSize: 15, color: C.ink, fontWeight: 600 }}>Soft-EBeam</div>
             <div style={{ maxWidth: 440, textAlign: 'center', lineHeight: 1.5 }}>Proximity effect correction, fracturing and write-field preparation for electron-beam lithography — running entirely in your browser. Nothing is uploaded.</div>

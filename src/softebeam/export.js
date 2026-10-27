@@ -53,7 +53,7 @@ export function exportGDS(job, opts = {}) {
   };
   // machine check, filled while writing
   // thin[pass]: thinner than the beam step (one line of shots); skip[pass]: thinner than half of it (a tool may write none)
-  const R = job.report = { polygons: 0, maxVerts: 0, dropped: 0, droppedArea: 0, minLayer: Infinity, maxLayer: -Infinity, minDt: Infinity, maxDt: -Infinity, thin: [0, 0], skip: [0, 0], chains: 0 };
+  const R = job.report = { polygons: 0, maxVerts: 0, dropped: 0, droppedArea: 0, minLayer: Infinity, maxLayer: -Infinity, minDt: Infinity, maxDt: -Infinity, thin: [0, 0], skip: [0, 0], offStep: [0, 0], chains: 0 };
   const C = job.chains, written = C ? new Uint8Array(C.chains.length) : null, bss = opts.bss || [0, 0];
   const writeFig = i => {
     let P, grpOf = null;
@@ -62,7 +62,7 @@ export function exportGDS(job, opts = {}) {
     const p = polyPts(P, k); if (!p) { R.dropped++; R.droppedArea += Math.abs(trapArea(t, i * 6)); return; }
     const [L, D] = layerDt(i, grpOf); g.rec(0x08, 0); g.i16(0x0D, L); g.i16(0x0E, D); g.xy(p); g.rec(0x11, 0);
     R.polygons++; R.maxVerts = Math.max(R.maxVerts, p.length / 2 - 1); R.minLayer = Math.min(R.minLayer, L); R.maxLayer = Math.max(R.maxLayer, L); R.minDt = Math.min(R.minDt, D); R.maxDt = Math.max(R.maxDt, D);
-    if (!grpOf) { const o = i * 6, h = t[o + 1] - t[o], w = h > 0 ? trapArea(t, o) / h : 0, ps = job.pass && job.pass[i] ? 1 : 0, m = Math.min(h, w); if (bss[ps] > 0 && m < bss[ps]) { R.thin[ps]++; if (m < bss[ps] / 2) R.skip[ps]++; } }
+    if (!grpOf) { const o = i * 6, h = t[o + 1] - t[o], w = h > 0 ? trapArea(t, o) / h : 0, ps = job.pass && job.pass[i] ? 1 : 0, m = Math.min(h, w); if (bss[ps] > 0 && m < bss[ps]) { R.thin[ps]++; if (m < bss[ps] / 2) R.skip[ps]++; } else if (bss[ps] > 0) { const rect = Math.abs(t[o + 2] - t[o + 4]) < 1e-6 && Math.abs(t[o + 3] - t[o + 5]) < 1e-6, off = v => Math.abs(v / bss[ps] - Math.round(v / bss[ps])) * bss[ps] > 0.05; if (off(h) || (rect && off(t[o + 3] - t[o + 2]))) R.offStep[ps]++; } }
   };
   const seq = job.seq || (job.fragField && job.order ? orderByField(job) : null);
   if (cellPerField && job.fragField && job.fields) {

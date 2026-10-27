@@ -261,6 +261,22 @@ PSF_k = ΔE_k/(E_tot·π(r_k² − r_{k−1}²)). ≥10⁵ electrons for β/η t
   energy to ≈ 0.40, below the 0.5 threshold (an unexposed line). Writing the seam band in both passes at half dose
   loses only half of that, E ≈ 0.60. Measured with the independent checker: 0.57 at 47 nm, 0.49 at 113 nm.
 
+### 5.3 The beam step and figure sizes
+- **What the tool does.** A vector-scan tool places a figure on its machine grid (1 nm at UW) but fills it with shots at
+  the beam step B (6 nm at UW). A figure h tall holds h/B rows; when that is not an integer the tool rounds (or
+  truncates) the last row, so the edge where the figure ends moves by up to B/2, and a seam between two figures gets a
+  gap or a double row of up to B/2 each. The figure sizes, not only the vertex grid, must be whole steps: "the size of
+  each shape is still a multiple of the beam step size … the outer edges are now placed to the 1 nm machine grid"
+  (Bojko et al., *Beam Step Size Fracturing for Bragg Grating Waveguides*, GenISys BEAMeeting, EIPBN 2014).
+- **Three ways out.** (a) Snap every vertex to the B grid (UW standard fracturing): seams close, but every edge moves
+  by up to B/2 and sizes come in B increments. (b) Whole-step figures with the remainder as an overlap of < B buried in
+  the middle (beam step size correction): edges stay on the 1 nm grid, the overlap adds < B × dose inside the shape.
+  (c) Lower current and B (1 nA, 2 nm at UW): exact, but 8× slower. Soft-EBeam does (b), and makes PEC edge strips
+  whole steps so the overlap is never next to an edge.
+- **Machine model check** (`verify/check_machine.py`): shots per figure under four fill rules (global grid snap,
+  per-figure round, per-figure floor, step stretched to fit), forward PSF from the shots, backscatter from areas; the
+  developed corrugation of the 13 Bragg gratings (ΔW 38–50 nm in 1 nm steps) of the UW test file, Si 100 kV HSQ PSF.
+
 ---
 
 ## 6. Key references

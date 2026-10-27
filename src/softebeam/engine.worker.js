@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // Soft-EBeam pipeline worker: keeps the layout and every stage result off the UI thread.
-import { absorbSlivers, TrapBuf, flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea, fragmentAdjacency, followGeometryFields, straightenCuts, bestGridOffset, fieldMetrics, structureSeeds, geoDistance, mergeFigures } from './geom.js';
+import { absorbSlivers, beamStepFit, TrapBuf, flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea, fragmentAdjacency, followGeometryFields, straightenCuts, bestGridOffset, fieldMetrics, structureSeeds, geoDistance, mergeFigures } from './geom.js';
 import { runPEC, quantizeDoses, quantizeLadder, simulate, contour, energyAt } from './pec.js';
 import { exportGDS, doseTable } from './export.js';
 import { analyzeStructure, cutWeight, zonesSplit } from './analyze.js';
@@ -94,7 +94,7 @@ const cmds = {
     const tr = [out.fragGroup.buffer, out.ctrl.buffer, out.kind.buffer, out.dose.buffer, out.cls.buffer]; if (fr) tr.push(fr.t.buffer, fr.layer.buffer, fr.comp.buffer);
     return { result: out, transfer: tr };
   },
-  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'meander', placement = 'plan', plan = null, passes = false, merge = true, slivers = true, bss = [10, 40] }, progress) {
+  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'meander', placement = 'plan', plan = null, passes = false, merge = true, slivers = true, stepFit = false, bss = [10, 40] }, progress) {
     if (!S.F || !S.q) throw new Error('run PEC first');
     const t = S.F.frags.t; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < S.F.frags.n; i++) { const o = i * 6; x0 = Math.min(x0, t[o + 2], t[o + 4]); x1 = Math.max(x1, t[o + 3], t[o + 5]); y0 = Math.min(y0, t[o]); y1 = Math.max(y1, t[o + 1]); }
@@ -162,6 +162,16 @@ const cmds = {
       const p0 = pass, s0 = share; if (p0) pass = Uint8Array.from(A.src, i => p0[i]); if (s0) share = Uint8Array.from(A.src, i => s0[i]);
       chains = { chainOf: A.chainOf, chains: A.chains, chainGroup: A.chainGroup };
     }
+    // whole beam steps: no figure edge is left to the tool's rounding (see beamStepFit)
+    let stepRows = 0, stepCols = 0;
+    if (stepFit) {
+      progress({ label: 'Fields: whole beam steps' });
+      const inChain = chains ? chains.chainOf : null, W = beamStepFit(T.frags, { stepOf: i => bss[pass && pass[i] ? 1 : 0], keep: inChain ? i => inChain[i] >= 0 : null }), s = W.src;
+      if (chains) { const first = new Int32Array(T.frags.n).fill(-1); for (let k = s.length - 1; k >= 0; k--) first[s[k]] = k; chains = { chainOf: Int32Array.from(s, i => inChain[i]), chains: chains.chains.map(L => L.map(i => first[i])), chainGroup: chains.chainGroup }; }
+      T = { ...T, frags: W.frags, fragGroup: Int32Array.from(s, i => T.fragGroup[i]), fragField: Int32Array.from(s, i => T.fragField[i]) };
+      const p0 = pass, s0 = share; if (p0) pass = Uint8Array.from(s, i => p0[i]); if (s0) share = Uint8Array.from(s, i => s0[i]);
+      stepRows = W.rows; stepCols = W.cols;
+    }
     let thinAfter = 0, skipAfter = 0; { const inChain = chains ? chains.chainOf : null; for (let i = 0; i < T.frags.n; i++) { if (inChain && inChain[i] >= 0) continue; const o6 = i * 6, h = T.frags.t[o6 + 1] - T.frags.t[o6], w = h > 0 ? trapArea(T.frags.t, o6) / h : 0, m = Math.min(h, w), s = bss[pass && pass[i] ? 1 : 0]; if (m < s) { thinAfter++; if (m < s / 2) skipAfter++; } } }
     progress({ label: 'Fields: writing order' });
     const dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
@@ -187,7 +197,7 @@ const cmds = {
     const fr = copyTraps(T.frags), sq = seq.slice(), pts = best.m.pts.slice(), cpts = best.m.critPts.slice();
     return { result: { n: T.frags.n, nBefore, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: best.seq, fieldSeq: best.seq, seq: sq, NX: T.NX, NY: T.NY, fieldsOn, travel: o.travel, jumpMax: o.jumpMax, fieldJumps: o.fieldJumps,
       placementUsed: best.name, stitches: best.m.stitches, stitchCost: best.m.cost, critCut: best.m.crit, cutLen: best.m.cutLen, nFields: best.m.fields, stageTravel: best.m.travel, stitchPts: pts, critPts: cpts, size,
-      passes: !!pass, nFine, nSeam, pass: pass && pass.slice(), thinBefore, thinAfter, skipAfter, nChains: chains ? chains.chains.length : 0, nPolygons: T.frags.n - (chains ? chains.chains.reduce((a, L) => a + L.length - 1, 0) : 0),
+      passes: !!pass, nFine, nSeam, pass: pass && pass.slice(), thinBefore, thinAfter, skipAfter, stepRows, stepCols, nChains: chains ? chains.chains.length : 0, nPolygons: T.frags.n - (chains ? chains.chains.reduce((a, L) => a + L.length - 1, 0) : 0),
       candidates: cands.length > 1 ? cands.map(c => ({ name: c.name, stitches: c.m.stitches, crit: c.m.crit, cost: c.m.cost, cutLen: c.m.cutLen, fields: c.m.fields, travel: c.m.travel, chosen: c === best })) : null },
       transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, sq.buffer, pts.buffer, cpts.buffer] };
   },

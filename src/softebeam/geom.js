@@ -1060,6 +1060,32 @@ export function chainOutline(t, L) {
   P.pop(); return P;
 }
 
+// Whole beam steps. A tool fills each figure with shots at its beam step B, so a figure that is not a whole number of
+// steps tall (a rectangle: or wide) has its last row (column) rounded on the tool, moving that edge by up to B/2 and
+// opening a gap or a double row at every seam. Such a figure becomes two of whole steps, one from each end,
+// overlapping by less than one step in the middle (BEAMER's beam step size correction does the same); the outer edges
+// stay exactly where they are. keep(i): leave a figure alone (polygon chains). src: the figure each piece came from.
+export function beamStepFit(frags, { stepOf, keep = null, tol = 0.05 }) {
+  const t = frags.t, n = frags.n, buf = new TrapBuf(Math.max(16, Math.ceil(n * 1.6))), src = []; let rows = 0, cols = 0;
+  const put = (y0, y1, a0, b0, a1, b1, i) => { buf.push(y0, y1, a0, b0, a1, b1, frags.layer[i], frags.comp[i]); src.push(i); };
+  const across = (y0, y1, a0, b0, a1, b1, i, B) => { // rectangles: whole steps across as well
+    const w = b0 - a0, m = Math.ceil(w / B - 1e-6);
+    if (Math.abs(a1 - a0) < 1e-6 && Math.abs(b1 - b0) < 1e-6 && m >= 2 && m * B - w > tol) {
+      const m1 = m >> 1; cols++; put(y0, y1, a0, a0 + m1 * B, a0, a0 + m1 * B, i); put(y0, y1, b0 - (m - m1) * B, b0, b0 - (m - m1) * B, b0, i);
+    } else put(y0, y1, a0, b0, a1, b1, i);
+  };
+  for (let i = 0; i < n; i++) {
+    const o = i * 6, y0 = t[o], y1 = t[o + 1], a0 = t[o + 2], b0 = t[o + 3], a1 = t[o + 4], b1 = t[o + 5], B = stepOf(i), h = y1 - y0;
+    if (!(B > 0) || (keep && keep(i)) || h < B - tol) { put(y0, y1, a0, b0, a1, b1, i); continue; } // thinner than one step: see absorbSlivers
+    const k = Math.ceil(h / B - 1e-6);
+    if (k >= 2 && k * B - h > tol) {
+      const k1 = k >> 1, ym = y0 + k1 * B, yn = y1 - (k - k1) * B, L = y => a0 + (a1 - a0) * (y - y0) / h, R = y => b0 + (b1 - b0) * (y - y0) / h;
+      rows++; across(y0, ym, a0, b0, L(ym), R(ym), i, B); across(yn, y1, L(yn), R(yn), a1, b1, i, B);
+    } else across(y0, y1, a0, b0, a1, b1, i, B);
+  }
+  return { frags: buf.trim(), src: Int32Array.from(src), rows, cols };
+}
+
 // ── point-in-figures (for tests / hover) ─────────────────
 export function trapContains(t, o, x, y) {
   if (y < t[o] || y > t[o + 1]) return false;

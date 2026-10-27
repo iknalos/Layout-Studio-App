@@ -19,3 +19,28 @@ on layer 101) and test how robust the two-pass seam is.
 For every site it prints the edge placement error along all design edges inside the window (mean, spread, worst),
 the worst corner pull-back, edge points that did not print or bridged, the minimum energy inside pads (must stay
 above the threshold) and the maximum energy in gaps (must stay below it). Needs numpy, scipy and shapely.
+
+## Machine model: what a beam-step tool writes
+
+`check_machine.py` asks a different question: the tool does not write polygons, it fills each figure with shots at
+its beam step. It turns every exported figure into shots under one of five fill rules and simulates those (forward
+PSF from the shots on a 1 nm grid, backscatter from the figure areas), then measures the developed corrugation of
+Bragg gratings.
+
+| Rule | What the tool does |
+|---|---|
+| `ideal` | exact area coverage (no beam step) |
+| `snap` | shots at the centres of one global B × B grid that fall inside the figure |
+| `round` | each figure on its own grid from its lower-left corner, round(size / B) rows and shots per row |
+| `floor` | the same with floor(size / B) |
+| `fit` | round(size / B) rows and shots, the step stretched to fit the figure |
+
+```
+# the test file: SiEPIC_EBeam_PDK/docs/process/ShotPitch/Bragg_Shot_Pitch_Fracturing.gds (UW, JEOL JBX-6300FS)
+node run_flow.mjs Bragg_Shot_Pitch_Fracturing.gds top=lukasc_top layers=1,31 preset=si100hsq bss=6 current=8 out=bragg
+python -I check_machine.py bragg_figs.json bragg_sites.json round 6
+```
+
+`run_flow.mjs` drives the Soft-EBeam worker headless with the app's defaults and writes the GDS, the dose table and
+`<out>_figs.json` (every written figure in writing order). `bragg_sites.json` lists the 26 gratings of the test file
+(the 13 with ΔW = 38…50 nm in 1 nm steps are measured, on layer 1 and layer 31).

@@ -64,6 +64,22 @@ Full derivations and sources: [RESEARCH.md](RESEARCH.md).
   (perpendicular to slanted sides). A figure is bulk only if all of it lies a sleeve inside the outline. The seam band
   is written in both passes at half dose, so an offset between the passes gives half dose, never an unexposed slit.
   Dose is additive, so the pass order does not change the energy; the fine pass goes first.
+- **Whole beam steps.** A tool fills each figure with shots at its beam step B. A figure that is not a whole number of
+  steps tall (a rectangle: or wide) gets its last row rounded on the tool, which moves that edge by up to B/2 and
+  leaves a gap or a double row at every seam. Such figures are split into two of whole steps, one from each end,
+  overlapping by less than one step in the middle (the beam step size correction BEAMER users apply for
+  Bragg gratings at UW: Bojko et al., GenISys BEAMeeting, EIPBN 2014). PEC edge strips are a whole number of fine steps,
+  so the overlap lands deep inside the shape and not next to the edge.
+
+## How tested processes write (sources)
+
+| | Published practice | Soft-EBeam |
+|---|---|---|
+| Fill of a figure | trapezoids with two sides parallel to an axis, filled with shots at the beam step, line by line (U. Houston EBL guide; JEOL JBX-5500FS fracturing rules) | same model; figures are whole beam steps |
+| Fracture for photonics | BEAMER Curved or LRFT mode, "X only" trapezoids; beam step size fracturing where 1 nm increments matter (Bojko 2014; GenISys JEOL v30 note p.18–20) | horizontal-slab trapezoids, slivers merged, whole beam steps |
+| Dose | base dose = dose-to-size for large areas; PEC brings every edge to 50 % (GenISys note p.38); HSQ at UW 2800 µC/cm² | same convention; an isolated waveguide gets ×(1+η) |
+| Figure order | JEOL sorts figures itself unless the job deck has `SRTPRM 0` (Stanford SNSF report); EBPG gpfsort "yellow brick road"; BEAMER Follow Geometry for rings and waveguides | horizontal serpentine rows; follow geometry as an option |
+| Fields | UW: 500 µm (4th lens), 2 passes with a half-field shift, 8 nA, 6 nm shot pitch (SiEPIC wiki; Bojko 2011: field shift lowered loss 4.2 → 3.3 dB/cm straight, 12.6 → 9.3 curved) | whole devices in one field where possible; multipass is a tool job setting (halve the base dose per pass) |
 
 ## Validation
 
@@ -90,6 +106,9 @@ Run the engine tests with Node 22+: `node src/softebeam/test/<name>.test.mjs` fo
 | Pad writing order | longest figure-to-figure jump inside a 20 µm pad 1.9 µm (was 24 µm) |
 | Slivers thinner than a 10 nm beam step (training files, si100 preset) | ebtest 7200 → 0, spiral 2347 → 183 (none thinner than 5 nm), benchmark 88 → 5; PEC edges unchanged (0.75 nm) |
 | Union of overlapping polygons whose edges cross exactly at another edge's x | exact at every offset (regression test; a float tie in the sweep used to drop a sliver) |
+| **Tested design, UW process**: SiEPIC `Bragg_Shot_Pitch_Fracturing.gds` (written and measured at UW on a JEOL JBX-6300FS, 8 nA, 6 nm beam step; 53 k shapes), Si 100 kV HSQ PSF, [machine model](verify/) | dose: isolated waveguides ×1.68–1.73 (expected 1 + η = 1.72; ≈ 4800 µC/cm² at UW's 2800 base). Ideal writing: all 13 corrugations (ΔW 38–50 nm in 1 nm steps) within 0.02 nm |
+| Same file, beam step as the tool writes it, before whole beam steps | 84 % of figures not whole steps; per-figure rounding: corrugation errors up to 2 nm (spread 1.5 nm); vertices snapped to the 6 nm grid (UW standard fracturing): ΔW in 6 nm steps, errors up to 5 nm |
+| Same file with whole beam steps (default) | every corrugation within 0.02 nm (spread 0.04 nm) whether the tool rounds or truncates the last row; 1.44 M figures instead of 0.79 M, 92 MB GDS. Without whole-step edge strips the buried overlap sat 11 nm from the edge: +0.9 nm on every ΔW |
 
 ## Limitations
 

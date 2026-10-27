@@ -130,5 +130,16 @@ console.log(fail ? `${fail} FAILED` : 'ALL PASS');
   ok(Math.abs(A1 - A0) / A0 < 1e-9, 'straightening keeps the exposed area');
   let inside = true; for (let i = 0; i < z.frags.n; i++) { const o = i * 6, f = z.fields[z.fragField[i]], t = z.frags.t; if (Math.min(t[o + 2], t[o + 4]) < f.x0 - 1e-6 || Math.max(t[o + 3], t[o + 5]) > f.x1 + 1e-6 || t[o] < f.y0 - 1e-6 || t[o + 1] > f.y1 + 1e-6) inside = false; }
   ok(inside, 'every figure lies inside its (floating) field');
+  { // whole beam steps: a 538 × 162 nm row and a slanted trapezoid on a 6 nm step
+    const { beamStepFit, TrapBuf } = await import('../geom.js');
+    const b = new TrapBuf(4); b.push(0, 162, 0, 538, 0, 538, 1, 0); b.push(0, 100, 0, 300, 50, 250, 1, 1); b.push(0, 4, 0, 50, 0, 50, 1, 2);
+    const fr = b.trim(), W = beamStepFit(fr, { stepOf: () => 6 }), t = W.frags.t; let whole = true, out = false, cov = [0, 0, 0];
+    for (let i = 0; i < W.frags.n; i++) { const o = i * 6, h = t[o + 1] - t[o], s = W.src[i], rect = t[o + 2] === t[o + 4] && t[o + 3] === t[o + 5];
+      if (s !== 2 && (Math.abs(h / 6 - Math.round(h / 6)) > 1e-9 || (rect && Math.abs((t[o + 3] - t[o + 2]) / 6 - Math.round((t[o + 3] - t[o + 2]) / 6)) > 1e-9))) whole = false;
+      const so = s * 6; if (t[o] < fr.t[so] - 1e-9 || t[o + 1] > fr.t[so + 1] + 1e-9) out = true; cov[s] += trapArea(t, o); }
+    ok(whole && !out, `beam step fit: every piece a whole number of 6 nm steps, inside its figure (${W.frags.n} pieces from 3)`);
+    ok(cov[0] >= trapArea(fr.t, 0) && cov[0] - trapArea(fr.t, 0) < 6 * 162 + 6 * 538, 'beam step fit: the pieces cover the row (overlap < one step each way)');
+    ok(W.src.filter(s => s === 2).length === 1, 'a figure thinner than one step is left alone');
+  }
   console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. field placement)');
 }

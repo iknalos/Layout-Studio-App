@@ -414,6 +414,11 @@ function pickWays(plans) {
 }
 const parseSizes = s => [...new Set(String(s).split(/[\s,;]+/).map(Number).filter(v => v > 0 && v < 1e5))].sort((a, b) => a - b);
 
+// Published, tested writing processes (sources in docs/soft-ebeam/README.md). Applying one sets the machine values only.
+const TOOL_PRESETS = [
+  { id: 'uw6300', label: 'JEOL JBX-6300FS · UW WNF (SiEPIC)', set: { mSizes: '500', dacBits: 19, current: 8, bss: 6, iBulk: 8, bssBulk: 6, baseDose: 2800 } }, // 100 kV, 4th lens 500 µm field, 8 nA, 6 nm shot pitch, HSQ 2800 µC/cm²
+];
+
 const DEFAULTS = {
   top: '', layers: null, region: 'all', win: { x0: 0, y0: 0, x1: 10000, y1: 10000 }, maxPolys: 400000,
   biasOn: false, bias: 0,
@@ -422,7 +427,7 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'meander', figOrderV: 2, placement: 'plan', mergeFigs: true, slivers: true,
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'meander', figOrderV: 2, placement: 'plan', mergeFigs: true, slivers: true, stepFit: true,
   anCrit: 150, anKeep: 1000, anFine: 3000, anSleeve: 500, mSizes: '100, 200, 500, 1000', dacBits: 20, priority: 'balanced', planPick: 0,
   passMode: 'plan', iBulk: 20, bssBulk: 40, tSwitch: 5, tField: 1, bulkOffset: 100,
   simPitch: 0, simThr: 0.5, simCompare: true,
@@ -488,9 +493,11 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   // automatic fragmentation sizes from the PSF (edge strip ≈ 3·α_eff, interior ≈ β/10)
   const frag = useMemo(() => {
     if (!P.fragAuto || !psfSummary) return { fragMax: P.fragMax, edgeW: P.edgeW, smallSize: P.smallSize, sleeve: +P.anSleeve, minFig: +P.bss };
-    const edgeW = Math.round(Math.min(250, Math.max(20, 3 * psfSummary.aEff))), fragMax = Math.round(Math.min(5000, Math.max(4 * edgeW, psfSummary.beta / 10)));
-    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW), sleeve: +P.anSleeve, minFig: +P.bss }; // sleeve: PEC pieces also end where the bulk pass begins; minFig: slivers share a neighbour's dose
+    const bs = +P.bss, e0 = Math.round(Math.min(250, Math.max(20, 3 * psfSummary.aEff))), edgeW = bs > 0 ? Math.max(bs, Math.round(e0 / bs) * bs) : e0, fragMax = Math.round(Math.min(5000, Math.max(4 * edgeW, psfSummary.beta / 10)));
+    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW), sleeve: +P.anSleeve, minFig: +P.bss }; // edge strips are whole beam steps; sleeve: PEC pieces also end where the bulk pass begins; minFig: slivers share a neighbour's dose
   }, [P.fragAuto, P.fragMax, P.edgeW, P.smallSize, P.anSleeve, P.bss, psfSummary]);
+  const fragSig = JSON.stringify(frag);
+  useEffect(() => { invalidate('analyze'); }, [fragSig]); // fragments follow the beam step too
 
   // ── write plans ────────────────────────────────────────
   const sizes = useMemo(() => parseSizes(P.mSizes), [P.mSizes]);
@@ -558,7 +565,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         setStatus(r.corrected ? `PEC: ${fmtN(r.nFrags)} figures, ${fmtN(r.nGroups)} dose groups, ${r.nClasses} classes; converged to ${pct(r.maxErr)} in ${r.iters} iterations.` : `Dose 1.0 assigned to ${fmtN(r.nFrags)} figures (PEC off).`);
       } else if (st === 'fields') {
         const plan = P.placement === 'plan' ? chosenNow() : null, ps = P.passMode === 'split' || (P.passMode === 'plan' && !!plan && plan.passes === 'split');
-        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement, plan: plan && { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes: ps, merge: P.mergeFigs, slivers: P.slivers, bss: [+P.bss, ps ? +P.bssBulk : +P.bss] }, m => setProg({ label: m.label, p: null }));
+        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement, plan: plan && { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes: ps, merge: P.mergeFigs, slivers: P.slivers, stepFit: P.stepFit, bss: [+P.bss, ps ? +P.bssBulk : +P.bss] }, m => setProg({ label: m.label, p: null }));
         setRes(x => ({ ...x, fields: r })); setView('order');
         setStatus(`${P.fieldsOn ? `${r.placementUsed}: ${r.nFields} fields of ${r.size / 1000} µm, ${r.stitches} stitches (${r.critCut} through critical spots), ` : ''}${fmtN(r.n)} figures${r.nBefore > r.n ? ` (merged from ${fmtN(r.nBefore)})` : ''}${r.passes ? ', fine pass first' : ''}. Press ▶ in the viewer to watch the writing order.`);
       }
@@ -758,6 +765,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           </Sec>
         </> : <Note>Runs after Heal & Fracture. Finds repeated devices, narrow features and tight gaps (critical spots that a field edge must never cut), and which parts need the fine beam. Then it scores every field size × placement × pass combination and recommends three.</Note>}
         <Sec title="Machine">
+          <Sel label="Tested process" value="" onChange={v => { const t = TOOL_PRESETS.find(x => x.id === v); if (t) setP(p => ({ ...p, ...t.set })); }} options={[['', 'apply a published process…'], ...TOOL_PRESETS.map(t => [t.id, t.label])]} w={210} />
           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, margin: '5px 0' }}><span style={{ color: C.mute }}>Field sizes offered</span><input value={P.mSizes} onChange={e => up('mSizes', e.target.value)} style={{ ...inp, width: 130 }} title="µm, comma separated" /></label>
           <Num label="Deflection DAC" unit="bits" value={P.dacBits} onChange={v => up('dacBits', v)} hint="Address grid = field / 2^bits; it must not be coarser than the fine beam step" />
           <Num label="Fine beam" unit="nA" value={P.current} onChange={v => up('current', v)} /><Num label="Fine beam step" unit="nm" value={P.bss} onChange={v => up('bss', v)} />
@@ -855,6 +863,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
           <Chk label="Merge same-dose neighbours" checked={P.mergeFigs} onChange={v => set('fields', 'mergeFigs', v)} hint="PEC needs small pieces to vary the dose; the machine does not. Neighbours in the same dose class, field and pass are joined back into whole trapezoids." />
           <Chk label="Merge slivers thinner than the beam step" checked={P.slivers} onChange={v => set('fields', 'slivers', v)} hint="A tool cannot fill a figure thinner than its beam step (one line of shots or none). Each sliver joins the neighbour it shares an edge with (dose classes within 2 %); stacked slivers become one convex polygon." />
+          <Chk label="Whole beam steps" checked={P.stepFit} onChange={v => set('fields', 'stepFit', v)} hint="A tool fills each figure with shots at its beam step. A figure that is not a whole number of steps tall (or wide) gets its last row rounded, which moves that edge by up to half a step and leaves a gap or a double row at every seam. Such figures are split into two of whole steps that overlap by less than one step in the middle; outer edges stay where they are." />
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><Chk label="figure jumps" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} /><Chk label="beam steps" checked={overlays.steps} onChange={v => setOverlays(o => ({ ...o, steps: v }))} hint="Zoom in: dots = beam positions at the beam step size inside each figure" /><Chk label="stitches" checked={overlays.stitches} onChange={v => setOverlays(o => ({ ...o, stitches: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
         </Sec>
         {res.fields && <Sec title="Result">
@@ -862,7 +871,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
             <KV k="Stitches (pattern cut by a field edge)" v={res.fields.stitches} tone={C.beam} /><KV k="…through critical spots" v={res.fields.critCut} tone={res.fields.critCut ? C.bad : C.ok} /><KV k="Stitch risk (waveguide-stitch equivalents)" v={res.fields.stitchCost.toFixed(2)} /><KV k="Stitched length" v={fmtLen(res.fields.cutLen)} /><KV k="Stage travel" v={fmtLen(res.fields.stageTravel)} /></>}
           <KV k="Polygons written" v={`${fmtN(res.fields.nPolygons)}${res.fields.nBefore > res.fields.nPolygons ? ` (from ${fmtN(res.fields.nBefore)} PEC pieces)` : ''}`} />
           <KV k="Thinner than the beam step (1 line of shots)" v={`${fmtN(res.fields.thinAfter)}${res.fields.thinBefore !== res.fields.thinAfter ? ` (was ${fmtN(res.fields.thinBefore)})` : ''}`} />
-          <KV k="…thinner than half of it (may be skipped)" v={fmtN(res.fields.skipAfter)} tone={res.fields.skipAfter ? C.warn : C.ok} />{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
+          <KV k="…thinner than half of it (may be skipped)" v={fmtN(res.fields.skipAfter)} tone={res.fields.skipAfter ? C.warn : C.ok} />{res.fields.stepRows + res.fields.stepCols > 0 && <KV k="Split into whole beam steps" v={`${fmtN(res.fields.stepRows + res.fields.stepCols)} figures`} />}{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
           {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>critical</th><th>risk</th><th>fields</th></tr></thead>
             <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.crit}</td><td>{c.cost.toFixed(2)}</td><td>{c.fields}</td></tr>)}</tbody></table>}
           <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>
@@ -915,6 +924,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
               {ok(true, `Valid GDSII: ${fmtN(R.polygons)} closed polygons (${(R.kB / 1024).toFixed(1)} MB)`)}
               {ok(R.maxVerts <= 200, `At most ${R.maxVerts} vertices per polygon (≤ 200 suits every tool)`, `Up to ${R.maxVerts} vertices per polygon: tools with a 200-vertex limit will reject some`)}
               {ok(!wide, `Layers ${R.minLayer}–${R.maxLayer}, datatypes ${R.minDt}–${R.maxDt}${R.mode === 'raith' ? ' (Raith dose convention)' : ' (all ≤ 255)'}`, `Layers ${R.minLayer}–${R.maxLayer}, datatypes ${R.minDt}–${R.maxDt}: above 255, which some tools reject; use coarser dose steps or the Raith format`)}
+              {(() => { const o = R.offStep || [0, 0]; return ok(!o[0] && !o[1], 'Every figure is a whole number of beam steps', `${fmtN(o[0] + o[1])} figures are not a whole number of beam steps: the tool rounds their last row or column, moving that edge by up to half a step (turn on Whole beam steps)`); })()}
               {ok(!R.skip[0] && !R.skip[1], `No figure thinner than half its beam step${R.thin[0] + R.thin[1] ? ` (${fmtN(R.thin[0] + R.thin[1])} get a single line of shots)` : ''}`, `${fmtN(R.skip[0] + R.skip[1])} figures thinner than half their beam step: a tool may write no shots there (no neighbour with a close dose to merge with)`)}
               {ok(R.droppedArea < 1000, R.dropped ? `${R.dropped} pieces thinner than the 1 nm database grid left out (${(R.droppedArea / 1e6).toFixed(5)} µm², negligible)` : 'Nothing lost to the 1 nm database grid', `${R.dropped} pieces thinner than the 1 nm database grid left out (${(R.droppedArea / 1e6).toFixed(4)} µm²)`)}
               {R.chains > 0 && ok(true, `${fmtN(R.chains)} sliver stacks written as single polygons`)}

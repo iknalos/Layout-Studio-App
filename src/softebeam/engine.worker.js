@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 // Soft-EBeam pipeline worker: keeps the layout and every stage result off the UI thread.
-import { TrapBuf, flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea, fragmentAdjacency, followGeometryFields, straightenCuts, bestGridOffset, fieldMetrics, structureSeeds, geoDistance, mergeFigures } from './geom.js';
+import { absorbSlivers, TrapBuf, flattenLib, biasRing, healAndFracture, toRectangles, fragmentForPEC, tileFields, fieldSequence, figureSequence, topCells, layersOf, trapArea, fragmentAdjacency, followGeometryFields, straightenCuts, bestGridOffset, fieldMetrics, structureSeeds, geoDistance, mergeFigures } from './geom.js';
 import { runPEC, quantizeDoses, quantizeLadder, simulate, contour, energyAt } from './pec.js';
 import { exportGDS, doseTable } from './export.js';
 import { analyzeStructure, cutWeight, zonesSplit } from './analyze.js';
@@ -18,7 +18,7 @@ function flatRings(rings, ringLayer) { // pack rings for drawing: coords + offse
 const copyTraps = tr => ({ n: tr.n, t: tr.t.slice(), layer: tr.layer.slice(), comp: tr.comp.slice() });
 const DOWNSTREAM = ['pec', 'T', 'q', 'adjF', 'dose', 'Dq', 'areas', 'areasPass'];
 const clear = keys => keys.forEach(k => delete S[k]);
-const fragKey = frag => JSON.stringify([frag.fragMax, frag.edgeW, frag.smallSize, frag.sleeve || 0]);
+const fragKey = frag => JSON.stringify([frag.fragMax, frag.edgeW, frag.smallSize, frag.sleeve || 0, frag.minFig || 0]);
 const ensureFrags = frag => { if (!S.F || S.fragKey !== fragKey(frag)) { S.F = fragmentForPEC(S.traps, S.nComp, frag); S.fragKey = fragKey(frag); clear(['an', 'DI', 'evals']); return true; } return false; };
 // pass of a dose group: 0 fine (critical + fine), 1 bulk
 const passOfGroup = () => S.an ? Uint8Array.from(S.an.groupCls, c => c === 2 ? 1 : 0) : null;
@@ -94,7 +94,7 @@ const cmds = {
     const tr = [out.fragGroup.buffer, out.ctrl.buffer, out.kind.buffer, out.dose.buffer, out.cls.buffer]; if (fr) tr.push(fr.t.buffer, fr.layer.buffer, fr.comp.buffer);
     return { result: out, transfer: tr };
   },
-  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'raster', placement = 'plan', plan = null, passes = false, merge = true }, progress) {
+  fields({ fieldsOn = true, size, originMode, ox, oy, traversal = 'meanderX', start = 'bl', figOrder = 'meander', placement = 'plan', plan = null, passes = false, merge = true, slivers = true, bss = [10, 40] }, progress) {
     if (!S.F || !S.q) throw new Error('run PEC first');
     const t = S.F.frags.t; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < S.F.frags.n; i++) { const o = i * 6; x0 = Math.min(x0, t[o + 2], t[o + 4]); x1 = Math.max(x1, t[o + 3], t[o + 5]); y0 = Math.min(y0, t[o]); y1 = Math.max(y1, t[o + 1]); }
@@ -152,17 +152,42 @@ const cmds = {
       T = { ...T, frags: M.frags, fragGroup: M.fragGroup, fragField: M.fragField };
       const p0 = pass, s0 = share; if (p0) pass = Uint8Array.from(M.src, i => p0[i]); if (s0) share = Uint8Array.from(M.src, i => s0[i]);
     }
+    // slivers thinner than the beam step of their pass are merged into a neighbour (see absorbSlivers)
+    const thinCount = (fr, ps) => { let c = 0; for (let i = 0; i < fr.n; i++) { const o6 = i * 6, h = fr.t[o6 + 1] - fr.t[o6], w = h > 0 ? trapArea(fr.t, o6) / h : 0; if (Math.min(h, w) < bss[ps && ps[i] ? 1 : 0]) c++; } return c; };
+    const thinBefore = thinCount(T.frags, pass); let chains = null;
+    if (slivers) {
+      progress({ label: 'Fields: merging slivers into neighbours' });
+      const A = absorbSlivers(T.frags, T.fragGroup, T.fragField, { key: i => `${T.fragField[i]}|${pass ? pass[i] : 0}|${share ? share[i] : 0}|${T.frags.layer[i]}`, thinOf: i => bss[pass && pass[i] ? 1 : 0], cls: i => S.q.cls[T.fragGroup[i]] });
+      T = { ...T, frags: A.frags, fragGroup: A.fragGroup, fragField: A.fragField };
+      const p0 = pass, s0 = share; if (p0) pass = Uint8Array.from(A.src, i => p0[i]); if (s0) share = Uint8Array.from(A.src, i => s0[i]);
+      chains = { chainOf: A.chainOf, chains: A.chains, chainGroup: A.chainGroup };
+    }
+    let thinAfter = 0, skipAfter = 0; { const inChain = chains ? chains.chainOf : null; for (let i = 0; i < T.frags.n; i++) { if (inChain && inChain[i] >= 0) continue; const o6 = i * 6, h = T.frags.t[o6 + 1] - T.frags.t[o6], w = h > 0 ? trapArea(T.frags.t, o6) / h : 0, m = Math.min(h, w), s = bss[pass && pass[i] ? 1 : 0]; if (m < s) { thinAfter++; if (m < s / 2) skipAfter++; } } }
     progress({ label: 'Fields: writing order' });
-    const adj = fragmentAdjacency(T.frags), dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
-    const dist = figOrder === 'shapes' ? geoDistance(T.frags, adj, structureSeeds(T.frags, adj, best.seedMode)) : null;
-    const o = figureSequence(T.frags, T.fragField, T.fields, best.seq, { figOrder, start, dose, dist });
-    let seq = o.seq, nFine = T.frags.n;
-    if (pass) { const fine = [], bulk = []; for (const i of seq) (pass[i] ? bulk : fine).push(i); seq = Int32Array.from([...fine, ...bulk]); nFine = fine.length; }
-    S.T = { ...T, order: best.seq, seq, pass, share };
+    const dose = figOrder === 'dose' ? Float64Array.from(T.fragGroup, g => S.q.classDose[S.q.cls[g]]) : null;
+    // each pass is ordered on its own figures: the fine pass of a pad is its outline ring, which must be walked around,
+    // not crossed band by band as if the (bulk) interior were still there
+    const orderOf = ids => {
+      const m = ids.length, buf = new TrapBuf(Math.max(1, m)), sf = new Int32Array(m), sd = dose ? new Float64Array(m) : null, tt = T.frags.t;
+      for (let k = 0; k < m; k++) { const i = ids[k], o6 = i * 6; buf.push(tt[o6], tt[o6 + 1], tt[o6 + 2], tt[o6 + 3], tt[o6 + 4], tt[o6 + 5], T.frags.layer[i], T.frags.comp[i]); sf[k] = T.fragField[i]; if (sd) sd[k] = dose[i]; }
+      const fr = buf.trim(), a = fragmentAdjacency(fr), d = figOrder === 'shapes' ? geoDistance(fr, a, structureSeeds(fr, a, best.seedMode)) : null;
+      const o = figureSequence(fr, sf, T.fields, best.seq, { figOrder, start, dose: sd, dist: d, adj: a });
+      return { seq: Int32Array.from(o.seq, k => ids[k]), o };
+    };
+    let seq, nFine = T.frags.n, o;
+    if (pass) {
+      const f = [], bl = []; for (let i = 0; i < T.frags.n; i++) (pass[i] ? bl : f).push(i);
+      const A = orderOf(f), Bq = orderOf(bl); seq = new Int32Array(T.frags.n); seq.set(A.seq); seq.set(Bq.seq, A.seq.length); nFine = f.length;
+      o = { travel: A.o.travel + Bq.o.travel, jumpMax: Math.max(A.o.jumpMax, Bq.o.jumpMax), fieldJumps: A.o.fieldJumps + Bq.o.fieldJumps };
+    } else {
+      const adj = fragmentAdjacency(T.frags), dist = figOrder === 'shapes' ? geoDistance(T.frags, adj, structureSeeds(T.frags, adj, best.seedMode)) : null;
+      o = figureSequence(T.frags, T.fragField, T.fields, best.seq, { figOrder, start, dose, dist, adj }); seq = o.seq;
+    }
+    S.T = { ...T, order: best.seq, seq, pass, share, chains };
     const fr = copyTraps(T.frags), sq = seq.slice(), pts = best.m.pts.slice(), cpts = best.m.critPts.slice();
     return { result: { n: T.frags.n, nBefore, frags: fr, fragGroup: T.fragGroup.slice(), fragField: T.fragField.slice(), fields: T.fields, order: best.seq, fieldSeq: best.seq, seq: sq, NX: T.NX, NY: T.NY, fieldsOn, travel: o.travel, jumpMax: o.jumpMax, fieldJumps: o.fieldJumps,
       placementUsed: best.name, stitches: best.m.stitches, stitchCost: best.m.cost, critCut: best.m.crit, cutLen: best.m.cutLen, nFields: best.m.fields, stageTravel: best.m.travel, stitchPts: pts, critPts: cpts, size,
-      passes: !!pass, nFine, nSeam, pass: pass && pass.slice(),
+      passes: !!pass, nFine, nSeam, pass: pass && pass.slice(), thinBefore, thinAfter, skipAfter, nChains: chains ? chains.chains.length : 0, nPolygons: T.frags.n - (chains ? chains.chains.reduce((a, L) => a + L.length - 1, 0) : 0),
       candidates: cands.length > 1 ? cands.map(c => ({ name: c.name, stitches: c.m.stitches, crit: c.m.crit, cost: c.m.cost, cutLen: c.m.cutLen, fields: c.m.fields, travel: c.m.travel, chosen: c === best })) : null },
       transfer: [fr.t.buffer, fr.layer.buffer, fr.comp.buffer, sq.buffer, pts.buffer, cpts.buffer] };
   },
@@ -176,10 +201,10 @@ const cmds = {
   export({ opts, baseDose }) {
     if (!S.F || !S.q) throw new Error('run PEC first');
     const src = S.T || null; // written in the chosen writing order; one cell per field only when fields are on
-    const job = { frags: src ? src.frags : S.F.frags, fragGroup: src ? src.fragGroup : S.F.fragGroup, groupClass: S.q.cls, classDose: S.q.classDose, fragField: src && src.fragField, fields: src && src.fields, order: src && src.order, seq: src && src.seq, pass: src && src.pass, share: src && src.share };
+    const job = { frags: src ? src.frags : S.F.frags, fragGroup: src ? src.fragGroup : S.F.fragGroup, groupClass: S.q.cls, classDose: S.q.classDose, fragField: src && src.fragField, fields: src && src.fields, order: src && src.order, seq: src && src.seq, pass: src && src.pass, share: src && src.share, chains: src && src.chains };
     const bytes = exportGDS(job, opts);
     const table = doseTable(S.q.classDose, S.q.counts, S.areas, { baseDose, mode: opts.mode, layerBase: opts.layerBase, passes: job.pass ? { bulkOffset: opts.bulkOffset || 100, areasPass: S.areasPass } : null, shared: !!(job.share && job.share.some(v => v)) });
-    return { result: { bytes, table }, transfer: [bytes.buffer] };
+    return { result: { bytes, table, report: job.report }, transfer: [bytes.buffer] };
   },
 };
 

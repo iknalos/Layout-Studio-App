@@ -369,7 +369,7 @@ export function toRectangles(traps, step) {
 // Components whose bbox ≤ smallSize stay whole and share one dose group.
 // Returns {frags, fragGroup, nGroups, ctrl (x,y per group), target (per group), groupComp, fragTrap (source trapezoid)}
 export function fragmentForPEC(traps, nComp, opts) {
-  const { fragMax = 1000, edgeW = 100, smallSize = 500, interiorTarget = 1.0, edgeTarget = 0.5, sleeve = 0 } = opts; // sleeve: extra cut at this distance from the outline (fine/bulk pass boundary)
+  const { fragMax = 1000, edgeW = 100, smallSize = 500, interiorTarget = 1.0, edgeTarget = 0.5, sleeve = 0, minFig = 0 } = opts; // sleeve: extra cut at this distance from the outline (fine/bulk pass boundary); minFig: beam step
   const t = traps.t, n = traps.n;
   // component bboxes
   const cb = new Float64Array(nComp * 4).fill(NaN);
@@ -452,7 +452,31 @@ export function fragmentForPEC(traps, nComp, opts) {
     }
   }
   const fr = out.trim();
-  return { frags: fr, fragGroup: Int32Array.from(fragGroup), nGroups: ctrl.length / 2, ctrl: Float64Array.from(ctrl), target: Float64Array.from(target), kind: Uint8Array.from(kind), groupComp: Int32Array.from(groupComp), fragTrap: Int32Array.from(fragTrap) };
+  let G = { fragGroup: Int32Array.from(fragGroup), nGroups: ctrl.length / 2, ctrl: Float64Array.from(ctrl), target: Float64Array.from(target), kind: Uint8Array.from(kind), groupComp: Int32Array.from(groupComp) };
+  if (minFig > 0) G = shareSliverDose(fr, G, minFig);
+  return { frags: fr, ...G, fragTrap: Int32Array.from(fragTrap) };
+}
+
+// A piece thinner than the beam step (slab fracturing makes them on every curve) cannot get its own dose: the tool
+// writes one line of shots there or none. It joins the dose group of the neighbour it shares the longest edge with,
+// so PEC solves one dose for both and the export can merge them into one figure.
+function shareSliverDose(fr, G, minFig) {
+  const n = fr.n, t = fr.t, adj = fragmentAdjacency(fr), ng = G.nGroups, gArea = new Float64Array(ng);
+  for (let i = 0; i < n; i++) gArea[G.fragGroup[i]] += trapArea(t, i * 6);
+  const thin = i => { const o = i * 6, h = t[o + 1] - t[o]; return h < minFig || (h > 0 ? trapArea(t, o) / h : 0) < minFig; };
+  const par = Int32Array.from({ length: ng }, (_, g) => g), fd = g => { while (par[g] !== g) g = par[g] = par[par[g]]; return g; };
+  let joined = 0;
+  for (let i = 0; i < n; i++) {
+    if (!thin(i)) continue; let best = -1, bw = 0, bestThin = true;
+    for (let k = adj.start[i]; k < adj.start[i + 1]; k++) { const j = adj.nb[k], tj = thin(j); if ((bestThin && !tj) || ((!tj || bestThin) && adj.w[k] > bw)) { best = j; bw = adj.w[k]; bestThin = tj; } }
+    if (best < 0) continue; const a = fd(G.fragGroup[i]), b = fd(G.fragGroup[best]); if (a === b) continue;
+    if (gArea[a] > gArea[b]) { par[b] = a; gArea[a] += gArea[b]; } else { par[a] = b; gArea[b] += gArea[a]; } joined++;
+  }
+  if (!joined) return G;
+  const map = new Int32Array(ng).fill(-1); let m = 0; for (let g = 0; g < ng; g++) if (fd(g) === g) map[g] = m++;
+  const ctrl = new Float64Array(2 * m), target = new Float64Array(m), kind = new Uint8Array(m), groupComp = new Int32Array(m);
+  for (let g = 0; g < ng; g++) if (map[g] >= 0) { const k = map[g]; ctrl[2 * k] = G.ctrl[2 * g]; ctrl[2 * k + 1] = G.ctrl[2 * g + 1]; target[k] = G.target[g]; kind[k] = G.kind[g]; groupComp[k] = G.groupComp[g]; }
+  return { fragGroup: Int32Array.from(G.fragGroup, g => map[fd(g)]), nGroups: m, ctrl, target, kind, groupComp, sliversJoined: joined };
 }
 
 export function trapCentroid(t, o) {
@@ -538,18 +562,23 @@ export function fieldSequence(NX, NY, traversal = 'meanderX', start = 'bl') {
 }
 
 // Figure order inside every field, fields visited in fieldSeq.
-// figOrder: 'shapes' (follow geometry), 'raster' | 'meander' (rows of height `band`), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
-export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null, dist = null } = {}) {
-  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n); let hs = 0;
+// figOrder: 'meander' (horizontal rows, serpentine), 'meanderV' (vertical columns, serpentine), 'raster' (rows, one direction),
+// 'shapes' (follow the structure), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
+export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null, dist = null, adj = null } = {}) {
+  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n), loc = adj ? new Int32Array(n).fill(-1) : null; let hs = 0;
   for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); hs += t[o + 1] - t[o]; }
-  const B = band > 0 ? band : Math.max(1, hs / Math.max(1, n)); // default row height = mean figure height
+  let ws = 0; for (let i = 0; i < n; i++) { const o = i * 6; ws += Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4]); }
+  const B = band > 0 ? band : Math.max(1, hs / Math.max(1, n)), Bw = band > 0 ? band : Math.max(1, ws / Math.max(1, n)); // row height / column width = mean figure size
   const sx = start === 'br' || start === 'tr' ? -1 : 1, sy = start === 'tl' || start === 'tr' ? -1 : 1;
   const byField = new Map(); for (let i = 0; i < n; i++) { let a = byField.get(fragField[i]); if (!a) byField.set(fragField[i], a = []); a.push(i); }
   const seq = new Int32Array(n); let p = 0;
   for (const f of fieldSeq) {
     const idx = byField.get(f); if (!idx) continue; const F = fields[f];
     const row = i => Math.floor(sy * cy[i] / B);
-    if (figOrder === 'meander') { // alternate direction on the rank of occupied rows (rows may be sparse)
+    if (figOrder === 'meanderV') { // vertical columns, serpentine (columns of the mean figure width)
+      const col = i => Math.floor(sx * cx[i] / Bw), rk = new Map(); [...new Set(idx.map(col))].sort((a, b) => a - b).forEach((c, k) => rk.set(c, k));
+      idx.sort((a, b) => (col(a) - col(b)) || (rk.get(col(a)) % 2 ? -1 : 1) * sy * (cy[a] - cy[b])); }
+    else if (figOrder === 'meander') { // alternate direction on the rank of occupied rows (rows may be sparse)
       const rk = new Map(); [...new Set(idx.map(row))].sort((a, b) => a - b).forEach((r, k) => rk.set(r, k));
       idx.sort((a, b) => (row(a) - row(b)) || (rk.get(row(a)) % 2 ? -1 : 1) * sx * (cx[a] - cx[b])); }
     else if (figOrder === 'centerOut' || figOrder === 'outsideIn') { const mx = (F.x0 + F.x1) / 2, my = (F.y0 + F.y1) / 2, s = figOrder === 'centerOut' ? 1 : -1; idx.sort((a, b) => s * ((cx[a] - mx) ** 2 + (cy[a] - my) ** 2 - (cx[b] - mx) ** 2 - (cy[b] - my) ** 2) || (row(a) - row(b))); }
@@ -557,30 +586,71 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
       const cb = new Map(); for (const i of idx) { const c = frags.comp[i]; let q = cb.get(c); if (!q) cb.set(c, q = [Infinity, Infinity, -Infinity]); q[0] = Math.min(q[0], sx * cx[i]); q[1] = Math.min(q[1], sy * cy[i]); q[2] = Math.max(q[2], sy * cy[i]); }
       const hs = [...cb.values()].map(q => q[2] - q[1]).sort((u, v) => u - v), Bc = Math.max(B, hs[Math.floor(hs.length / 2)] || B);
       idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb); return (Math.floor(A[1] / Bc) - Math.floor(Q[1] / Bc)) || (A[0] - Q[0]) || (ca - cbb); } return dist ? (dist[a] - dist[b]) || (row(a) - row(b)) : (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
-      // Along the structure in bands of equal distance from its start; each band is written along its own principal axis,
-      // starting from the end nearer to where the previous band finished. A pad becomes a serpentine, a waveguide is
-      // written end to end, and no figure-to-figure jump crosses the shape (sorting by distance alone alternates
-      // between both sides of a wide front).
+      // Follow the structure (option for waveguides and rings). Two candidate orders per shape; the one with less beam
+      // travel wins:
+      //  - walk: figures fall into bands of equal distance from the start of the shape; touching figures of one band form
+      //    a cluster (a cross-section of one branch); the walk goes to a touching unvisited cluster and backtracks only
+      //    when a branch ends, so a waveguide is written end to end, a ring once around, each arm of a Y in turn
+      //  - rows: serpentine rows of the typical figure height (best for filled areas such as pad interiors)
+      // Each shape starts from whichever end is nearer the beam, and the nearest unwritten shape comes next.
       if (dist) {
         let px = sx < 0 ? F.x1 : F.x0, py = sy < 0 ? F.y1 : F.y0;
-        for (let a = 0; a < idx.length;) {
-          let b = a; while (b < idx.length && frags.comp[idx[b]] === frags.comp[idx[a]]) b++;
-          const ext = []; for (let k = a; k < b; k++) { const o = idx[k] * 6; ext.push(Math.max(t[o + 1] - t[o], Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4]))); }
-          ext.sort((u, v) => u - v); const Bd = Math.max(1e-6, 1.5 * ext[ext.length >> 1]);
-          for (let s = a; s < b;) {
-            let e = s; const band = Math.floor(dist[idx[s]] / Bd); while (e < b && Math.floor(dist[idx[e]] / Bd) === band) e++;
-            if (e - s > 1) {
-              let mx = 0, my = 0; for (let k = s; k < e; k++) { mx += cx[idx[k]]; my += cy[idx[k]]; } mx /= e - s; my /= e - s;
-              let sxx = 0, syy = 0, sxy = 0; for (let k = s; k < e; k++) { const dx = cx[idx[k]] - mx, dy = cy[idx[k]] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
-              const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(th), uy = Math.sin(th), pr = i => (cx[i] - mx) * ux + (cy[i] - my) * uy;
-              const sub = idx.slice(s, e).sort((p, q) => pr(p) - pr(q));
-              const f0 = sub[0], f1 = sub[sub.length - 1]; if ((cx[f1] - px) ** 2 + (cy[f1] - py) ** 2 < (cx[f0] - px) ** 2 + (cy[f0] - py) ** 2) sub.reverse();
-              for (let k = 0; k < sub.length; k++) idx[s + k] = sub[k];
-            }
-            const l = idx[e - 1]; px = cx[l]; py = cy[l]; s = e;
+        const cost = (ord, x, y) => { if (!ord.length) return 0; let c = Math.hypot(cx[ord[0]] - x, cy[ord[0]] - y); for (let k = 1; k < ord.length; k++) c += trapGap(t, ord[k - 1], ord[k]); return c; };
+        const axisSort = (list, x, y) => { // along the principal axis, from the end nearer to (x, y)
+          if (list.length > 1) {
+            let mx = 0, my = 0; for (const i of list) { mx += cx[i]; my += cy[i]; } mx /= list.length; my /= list.length;
+            let sxx = 0, syy = 0, sxy = 0; for (const i of list) { const dx = cx[i] - mx, dy = cy[i] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+            const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(th), uy = Math.sin(th), pr = i => (cx[i] - mx) * ux + (cy[i] - my) * uy;
+            list.sort((p, q) => pr(p) - pr(q));
+            const f0 = list[0], f1 = list[list.length - 1]; if ((cx[f1] - x) ** 2 + (cy[f1] - y) ** 2 < (cx[f0] - x) ** 2 + (cy[f0] - y) ** 2) list.reverse();
           }
-          a = b;
+          return list;
+        };
+        const walk = (run, band, startK, x0, y0) => {
+          const m = run.length, out = []; let x = x0, y = y0;
+          if (!adj) { for (let s = 0; s < m;) { let e = s; while (e < m && band[e] === band[s]) e++; for (const i of axisSort(run.slice(s, e), x, y)) out.push(i); const l = out[out.length - 1]; x = cx[l]; y = cy[l]; s = e; } return out; }
+          run.forEach((i, k) => { loc[i] = k; });
+          const par = Int32Array.from({ length: m }, (_, k) => k), fd = k => { while (par[k] !== k) k = par[k] = par[par[k]]; return k; };
+          for (let k = 0; k < m; k++) { const i = run[k]; for (let e = adj.start[i]; e < adj.start[i + 1]; e++) { const q = loc[adj.nb[e]]; if (q >= 0 && band[q] === band[k]) { const r1 = fd(k), r2 = fd(q); if (r1 !== r2) par[r1] = r2; } } }
+          const cid = new Int32Array(m), mem = [], root = new Map();
+          for (let k = 0; k < m; k++) { const r = fd(k); let c = root.get(r); if (c === undefined) { c = mem.length; root.set(r, c); mem.push([]); } cid[k] = c; mem[c].push(run[k]); }
+          const C = mem.length, nbs = Array.from({ length: C }, () => new Set()), ccx = new Float64Array(C), ccy = new Float64Array(C);
+          for (let k = 0; k < m; k++) { const i = run[k]; ccx[cid[k]] += cx[i] / mem[cid[k]].length; ccy[cid[k]] += cy[i] / mem[cid[k]].length; for (let e = adj.start[i]; e < adj.start[i + 1]; e++) { const q = loc[adj.nb[e]]; if (q >= 0 && cid[q] !== cid[k]) nbs[cid[k]].add(cid[q]); } }
+          run.forEach(i => { loc[i] = -1; });
+          const seen = new Uint8Array(C), stack = []; let cur = cid[startK], left = C;
+          const nearest = cs => { let best = -1, bd = Infinity; for (const c of cs) if (!seen[c]) { const d = (ccx[c] - x) ** 2 + (ccy[c] - y) ** 2; if (d < bd) { bd = d; best = c; } } return best; };
+          while (cur >= 0) {
+            seen[cur] = 1; left--; for (const i of axisSort(mem[cur].slice(), x, y)) out.push(i); const l = out[out.length - 1]; x = cx[l]; y = cy[l]; stack.push(cur);
+            let nx = nearest(nbs[cur]);
+            while (nx < 0 && stack.length) { stack.pop(); if (stack.length) nx = nearest(nbs[stack[stack.length - 1]]); } // branch ended: back to the last fork
+            if (nx < 0 && left > 0) nx = nearest(Array.from({ length: C }, (_, c) => c)); // a separate piece of the shape
+            cur = nx;
+          }
+          return out;
+        };
+        const rows = (run, x0, y0) => { // serpentine rows, starting at the row and end nearer to (x0, y0)
+          const hs = run.map(i => t[i * 6 + 1] - t[i * 6]).sort((u, v) => u - v), Hr = Math.max(1e-6, hs[hs.length >> 1]);
+          let lo = Infinity, hi = -Infinity; for (const i of run) { lo = Math.min(lo, cy[i]); hi = Math.max(hi, cy[i]); }
+          const up = Math.abs(lo - y0) <= Math.abs(hi - y0), byRow = new Map();
+          for (const i of run) { const r = Math.floor(cy[i] / Hr); let L = byRow.get(r); if (!L) byRow.set(r, L = []); L.push(i); }
+          const keys = [...byRow.keys()].sort((u, v) => up ? u - v : v - u), out = []; let x = x0;
+          for (const r of keys) { const L = byRow.get(r).sort((p, q) => cx[p] - cx[q]); if (Math.abs(cx[L[L.length - 1]] - x) < Math.abs(cx[L[0]] - x)) L.reverse(); for (const i of L) out.push(i); x = cx[L[L.length - 1]]; }
+          return out;
+        };
+        const runs = []; for (let a = 0; a < idx.length;) { let b = a; while (b < idx.length && frags.comp[idx[b]] === frags.comp[idx[a]]) b++; runs.push(idx.slice(a, b)); a = b; }
+        const res = [], done = new Uint8Array(runs.length), nn = runs.length <= 400; // nearest shape next, for up to 400 shapes in a field
+        for (let r = 0; r < runs.length; r++) {
+          let pick = r;
+          if (nn) { let bd = Infinity; for (let q = 0; q < runs.length; q++) if (!done[q]) { const R = runs[q]; for (const i of [R[0], R[R.length - 1]]) { const d = (cx[i] - px) ** 2 + (cy[i] - py) ** 2; if (d < bd) { bd = d; pick = q; } } } }
+          done[pick] = 1; const run = runs[pick], m = run.length;
+          const ext = []; for (const i of run) { const o = i * 6; ext.push(Math.max(t[o + 1] - t[o], Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4]))); }
+          ext.sort((u, v) => u - v); const Bd = Math.max(1e-6, 1.5 * ext[ext.length >> 1]), band = Int32Array.from(run, i => Math.floor(dist[i] / Bd));
+          const fromFar = (cx[run[m - 1]] - px) ** 2 + (cy[run[m - 1]] - py) ** 2 < (cx[run[0]] - px) ** 2 + (cy[run[0]] - py) ** 2;
+          let best = walk(run, band, fromFar ? m - 1 : 0, px, py);
+          if (m > 3) { const alt = rows(run, px, py); if (cost(alt, px, py) < cost(best, px, py)) best = alt; }
+          for (const i of best) res.push(i); const l = best[best.length - 1]; px = cx[l]; py = cy[l];
         }
+        for (let k = 0; k < res.length; k++) idx[k] = res[k];
       }
     }
     else if (figOrder === 'dose' && dose) idx.sort((a, b) => (dose[a] - dose[b]) || (row(a) - row(b)) || sx * (cx[a] - cx[b]));
@@ -592,6 +662,17 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
   let travel = 0, jumpMax = 0, fieldJumps = 0;
   for (let k = 1; k < p; k++) { const a = seq[k - 1], b = seq[k], d = Math.hypot(cx[b] - cx[a], cy[b] - cy[a]); travel += d; if (fragField[a] !== fragField[b]) fieldJumps++; else jumpMax = Math.max(jumpMax, d); }
   return { seq, travel, jumpMax, fieldJumps };
+}
+
+// distance between two trapezoids (nearest points, vertex-to-edge both ways); 0 when they touch
+export function trapGap(t, a, b) {
+  const A = [t[a * 6 + 2], t[a * 6], t[a * 6 + 3], t[a * 6], t[a * 6 + 5], t[a * 6 + 1], t[a * 6 + 4], t[a * 6 + 1]], B = [t[b * 6 + 2], t[b * 6], t[b * 6 + 3], t[b * 6], t[b * 6 + 5], t[b * 6 + 1], t[b * 6 + 4], t[b * 6 + 1]];
+  let best = Infinity;
+  for (const [P, Q] of [[A, B], [B, A]]) for (let i = 0; i < 8; i += 2) for (let j = 0; j < 8; j += 2) {
+    const k = (j + 2) % 8, dx = Q[k] - Q[j], dy = Q[k + 1] - Q[j + 1], L = dx * dx + dy * dy; let u = L > 0 ? ((P[i] - Q[j]) * dx + (P[i + 1] - Q[j + 1]) * dy) / L : 0; u = u < 0 ? 0 : u > 1 ? 1 : u;
+    const d = (Q[j] + u * dx - P[i]) ** 2 + (Q[j + 1] + u * dy - P[i + 1]) ** 2; if (d < best) best = d;
+  }
+  return Math.sqrt(best);
 }
 
 // greedy nearest-neighbour tour (in place) starting near (x0,y0), using a bucket grid
@@ -888,6 +969,95 @@ export function mergeFigures(frags, fragGroup, fragField, key, eps = 1e-6) {
   const out = new TrapBuf(n), g = [], f = [], src = [];
   for (let i = 0; i < n; i++) if (alive[i]) { const o = i * 6; out.push(T[o], T[o + 1], T[o + 2], T[o + 3], T[o + 4], T[o + 5], frags.layer[i], frags.comp[i]); g.push(grp[i]); f.push(fragField[i]); src.push(i); }
   return { frags: out.trim(), fragGroup: Int32Array.from(g), fragField: Int32Array.from(f), src: Int32Array.from(src) }; // src: input index of each kept figure
+}
+
+// ── slivers: figures thinner than the beam step ──────────
+// A tool cannot fill a figure thinner than its beam step: it writes one line of shots or none, so the dose is wrong
+// there. Slab fracturing makes such slivers on curves (the caps of a circle, every vertex of a polygonised arc).
+// Each sliver is merged into the neighbour it shares a full edge with, if both are in the same field and pass and
+// their dose classes differ by at most `maxSteps`:
+//  - side by side (same y range): the union is still a trapezoid
+//  - stacked: the chain becomes one polygon (≤ 49 members, ≤ 200 vertices), which tools fill or fracture themselves
+// The merged piece takes the dose of its largest member (classes 1 % apart: the sliver's dose moves by ≤ 2 %).
+// thinOf(i): minimum size for figure i (its pass's beam step); key(i): field/pass/layer key; cls(i): dose class.
+export function absorbSlivers(frags, fragGroup, fragField, { key, thinOf, cls, maxSteps = 2, maxChain = 49 }) {
+  const n0 = frags.n, E = 1e-6;
+  // working copies (pieces cut from slivers are appended)
+  const tz = [], lay = [], cmp = [], grp = [], fld = [], ky = [], th = [], src = [];
+  for (let i = 0; i < n0; i++) { const o = i * 6; tz.push([frags.t[o], frags.t[o + 1], frags.t[o + 2], frags.t[o + 3], frags.t[o + 4], frags.t[o + 5]]); lay.push(frags.layer[i]); cmp.push(frags.comp[i]); grp.push(fragGroup[i]); fld.push(fragField[i]); ky.push(key(i)); th.push(thinOf(i)); src.push(i); }
+  const ar = q => 0.5 * ((q[3] - q[2]) + (q[5] - q[4])) * (q[1] - q[0]), alive = tz.map(() => 1), area = tz.map(ar);
+  const clsOf = k => cls(src[k]), close = (a, b) => Math.abs(clsOf(a) - clsOf(b)) <= maxSteps;
+  const thinX = k => { const h = tz[k][1] - tz[k][0]; return (h > 0 ? area[k] / h : 0) < th[k]; }, thinY = k => tz[k][1] - tz[k][0] < th[k];
+  // side by side: same y range, a shared side
+  const rows = new Map(); tz.forEach((q, k) => { const kk = `${ky[k]}|${q[0]}|${q[1]}`; let L = rows.get(kk); if (!L) rows.set(kk, L = []); L.push(k); });
+  let mergedX = 0;
+  for (const L of rows.values()) {
+    if (L.length < 2) continue; L.sort((a, b) => tz[a][2] - tz[b][2]);
+    let cur = L[0];
+    for (let q = 1; q < L.length; q++) { const j = L[q], c = tz[cur], d = tz[j];
+      if (Math.abs(c[3] - d[2]) <= E && Math.abs(c[5] - d[4]) <= E && (thinX(cur) || thinX(j)) && close(cur, j)) { if (area[j] > area[cur]) grp[cur] = grp[j]; c[3] = d[3]; c[5] = d[5]; area[cur] += area[j]; alive[j] = 0; mergedX++; }
+      else cur = j; }
+  }
+  // stacked: exact shared edges first
+  const r = v => Math.round(v * 2), up = [], down = []; // edge keys on a 0.5 nm grid
+  const topKey = k => `${ky[k]}|${r(tz[k][1])}|${r(tz[k][4])}|${r(tz[k][5])}`, botKey = k => `${ky[k]}|${r(tz[k][0])}|${r(tz[k][2])}|${r(tz[k][3])}`;
+  for (let k = 0; k < tz.length; k++) { up.push(-1); down.push(-1); }
+  const tops = new Map(); for (let k = 0; k < tz.length; k++) if (alive[k]) tops.set(topKey(k), k);
+  const order = []; for (let k = 0; k < tz.length; k++) if (alive[k]) order.push(k); order.sort((a, b) => tz[a][0] - tz[b][0]);
+  for (const j of order) { const i = tops.get(botKey(j)); if (i === undefined || i === j || up[i] >= 0) continue; if (!(thinY(i) || thinY(j)) || !close(i, j)) continue; up[i] = j; down[j] = i; }
+  // a sliver still alone: cut it wherever a figure above (or below) begins or ends, then stack each piece on the
+  // neighbour whose edge contains it (slab fracturing cuts neighbouring rows at different places)
+  const byBot = new Map(), byTop = new Map();
+  for (let k = 0; k < tz.length; k++) if (alive[k]) { for (const [M, kk] of [[byBot, `${ky[k]}|${r(tz[k][0])}`], [byTop, `${ky[k]}|${r(tz[k][1])}`]]) { let L = M.get(kk); if (!L) M.set(kk, L = []); L.push(k); } }
+  const cutAt = (q, xs) => { // vertical cuts of a slab trapezoid; null if a cut would leave more than one piece per side
+    const out = []; let rest = q;
+    for (const c of xs) { const sp = splitTrap(Float64Array.from(rest), 0, 0, c); if (sp.lo.length !== 1 || sp.hi.length !== 1) return null; out.push(sp.lo[0]); rest = sp.hi[0]; }
+    out.push(rest); return out;
+  };
+  let split = 0;
+  const n1 = tz.length;
+  for (let k = 0; k < n1; k++) {
+    if (!alive[k] || !thinY(k) || up[k] >= 0 || down[k] >= 0) continue;
+    const q = tz[k];
+    for (const side of ['above', 'below']) {
+      const lo = side === 'above' ? 4 : 2, el = side === 'above' ? 2 : 4; // sliver edge facing the neighbours / their facing edge
+      const L = ((side === 'above' ? byBot : byTop).get(`${ky[k]}|${r(side === 'above' ? q[1] : q[0])}`) || [])
+        .filter(j => alive[j] && j !== k && (side === 'above' ? down[j] < 0 : up[j] < 0) && close(j, k) && Math.min(tz[j][el + 1], q[lo + 1]) - Math.max(tz[j][el], q[lo]) > 0.5);
+      if (!L.length || L.length > 24) continue;
+      L.sort((a2, b2) => tz[a2][el] - tz[b2][el]);
+      const xs = []; for (const j of L) for (const x of [tz[j][el], tz[j][el + 1]]) if (x > q[lo] + 0.5 && x < q[lo + 1] - 0.5 && !xs.some(v => Math.abs(v - x) <= 0.5)) xs.push(x);
+      xs.sort((u, v) => u - v);
+      const pieces = xs.length ? cutAt(q, xs) : [q]; if (!pieces) continue;
+      const host = pieces.map(pc => { const a0 = pc[lo], a1 = pc[lo + 1], mid = (a0 + a1) / 2; return L.find(j => tz[j][el] <= a0 + 0.5 && tz[j][el + 1] >= a1 - 0.5 && tz[j][el] <= mid && mid <= tz[j][el + 1]); });
+      if (!host.some(h => h !== undefined)) continue;
+      alive[k] = 0; split++;
+      pieces.forEach((pc, m) => {
+        const id = tz.length; tz.push(pc); lay.push(lay[k]); cmp.push(cmp[k]); grp.push(grp[k]); fld.push(fld[k]); ky.push(ky[k]); th.push(th[k]); src.push(src[k]); alive.push(1); area.push(ar(pc)); up.push(-1); down.push(-1);
+        const j = host[m]; if (j === undefined) return;
+        if (side === 'above') { if (down[j] < 0) { up[id] = j; down[j] = id; } } else if (up[j] < 0) { up[j] = id; down[id] = j; }
+      });
+      break;
+    }
+  }
+  // chains bottom → top (capped), dose group of the largest member
+  const N = tz.length, map = new Int32Array(N).fill(-1), out = new TrapBuf(N), g = [], f = [], so = []; let mm = 0;
+  for (let k = 0; k < N; k++) if (alive[k]) { const q = tz[k]; map[k] = mm++; out.push(q[0], q[1], q[2], q[3], q[4], q[5], lay[k], cmp[k]); g.push(grp[k]); f.push(fld[k]); so.push(src[k]); }
+  const chainOf = new Int32Array(mm).fill(-1), chains = [], chainGroup = [];
+  for (let k = 0; k < N; k++) {
+    if (!alive[k] || (down[k] >= 0 && alive[down[k]]) || up[k] < 0) continue;
+    let L = [], best = k;
+    for (let j = k; j >= 0 && alive[j]; j = up[j]) { L.push(j); if (area[j] > area[best]) best = j; if (L.length === maxChain) { chains.push(L.map(x => map[x])); chainGroup.push(grp[best]); for (const x of L) chainOf[map[x]] = chains.length - 1; L = []; best = up[j] >= 0 ? up[j] : j; } }
+    if (L.length > 1) { chains.push(L.map(x => map[x])); chainGroup.push(grp[best]); for (const x of L) chainOf[map[x]] = chains.length - 1; }
+  }
+  return { frags: out.trim(), fragGroup: Int32Array.from(g), fragField: Int32Array.from(f), src: Int32Array.from(so), chainOf, chains, chainGroup: Int32Array.from(chainGroup), mergedX, split };
+}
+// outline of a stacked chain (bottom → top) as one polygon, counter-clockwise; members may differ in width where they
+// meet (a sliver piece on a wider neighbour), which becomes a small step in the outline
+export function chainOutline(t, L) {
+  const P = [[t[L[0] * 6 + 2], t[L[0] * 6]]];
+  for (const k of L) P.push([t[k * 6 + 3], t[k * 6]], [t[k * 6 + 5], t[k * 6 + 1]]);
+  for (let q = L.length - 1; q >= 0; q--) P.push([t[L[q] * 6 + 4], t[L[q] * 6 + 1]], [t[L[q] * 6 + 2], t[L[q] * 6]]);
+  P.pop(); return P;
 }
 
 // ── point-in-figures (for tests / hover) ─────────────────

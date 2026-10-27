@@ -75,3 +75,17 @@ console.log(fail ? `${fail} FAILED` : 'ALL PASS');
   }
   console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. crossing regression)');
 }
+{ // slivers: a 64-gon dot fractures into thin slabs; sharing doses and stacking leaves no figure thinner than the step
+  const { absorbSlivers, chainOutline } = await import('../geom.js');
+  const ring = Float64Array.from([...Array(64)].flatMap((_, k) => [1000 + 400 * Math.cos(2 * Math.PI * k / 64), 1000 + 400 * Math.sin(2 * Math.PI * k / 64)]));
+  const H = healAndFracture([ring], [1]), F = fragmentForPEC(H.traps, H.nComp, { fragMax: 950, edgeW: 40, smallSize: 300, minFig: 10 });
+  const thin = (fr, i) => { const o = i * 6, h = fr.t[o + 1] - fr.t[o]; return Math.min(h, h > 0 ? trapArea(fr.t, o) / h : 0) < 10; };
+  let before = 0; for (let i = 0; i < F.frags.n; i++) if (thin(F.frags, i)) before++;
+  const M0 = mergeFigures(F.frags, F.fragGroup, new Int32Array(F.frags.n), () => 1); // as in the pipeline: same-dose merge first (uniform dose here)
+  const A = absorbSlivers(M0.frags, M0.fragGroup, M0.fragField, { key: () => 0, thinOf: () => 10, cls: () => 1 });
+  let after = 0, aOut = 0; for (let i = 0; i < A.frags.n; i++) { if (A.chainOf[i] < 0 && thin(A.frags, i)) after++; aOut += trapArea(A.frags.t, i * 6); }
+  let polyA = 0; for (const L of A.chains) { const P = chainOutline(A.frags.t, L); let s = 0; for (let k = 0; k < P.length; k++) { const p = P[k], q = P[(k + 1) % P.length]; s += p[0] * q[1] - q[0] * p[1]; } polyA += s / 2; }
+  let chainA = 0; for (const L of A.chains) for (const k of L) chainA += trapArea(A.frags.t, k * 6);
+  ok(before > 0 && after === 0 && Math.abs(aOut - area(F.frags)) < 1e-3 && Math.abs(polyA - chainA) < 1e-3 * chainA, `dot: ${before} slivers → ${after} left, ${A.chains.length} stacked polygon(s) with the same area`);
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. slivers)');
+}

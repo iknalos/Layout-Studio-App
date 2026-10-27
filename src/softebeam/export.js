@@ -5,6 +5,7 @@
 //  two passes      : bulk-pass figures go to layer + bulkOffset (fine pass keeps the layer), written after the fine pass;
 //                    shared-seam figures (in both passes at half dose) use classes N+1…2N = half of classes 1…N
 
+import { chainOutline, trapArea } from './geom.js';
 const enc = new TextEncoder();
 class GdsOut {
   constructor() { this.parts = []; this.size = 0; }
@@ -25,14 +26,17 @@ class GdsOut {
   bytes() { const out = new Uint8Array(this.size); let o = 0; for (const p of this.parts) { out.set(p, o); o += p.length; } return out; }
 }
 
-// trapezoid → integer polygon (closed), dropping repeated corners (triangles)
-function trapPts(t, o, k) {
-  const P = [[t[o + 2], t[o]], [t[o + 3], t[o]], [t[o + 5], t[o + 1]], [t[o + 4], t[o + 1]]].map(([x, y]) => [Math.round(x / k), Math.round(y / k)]);
-  const Q = []; for (const p of P) { const q = Q[Q.length - 1]; if (!q || q[0] !== p[0] || q[1] !== p[1]) Q.push(p); }
+// polygon (nm) → integer polygon on the database grid (closed): repeated and collinear points dropped; null if it
+// has no area left after rounding (a sub-grid sliver)
+function polyPts(P, k) {
+  let Q = []; for (const [x, y] of P) { const p = [Math.round(x / k), Math.round(y / k)], q = Q[Q.length - 1]; if (!q || q[0] !== p[0] || q[1] !== p[1]) Q.push(p); }
   if (Q.length > 1 && Q[0][0] === Q[Q.length - 1][0] && Q[0][1] === Q[Q.length - 1][1]) Q.pop();
+  for (let changed = true; changed && Q.length >= 3;) { changed = false; for (let i = 0; i < Q.length; i++) { const a = Q[(i + Q.length - 1) % Q.length], b = Q[i], c = Q[(i + 1) % Q.length]; if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) === 0) { Q.splice(i, 1); changed = true; break; } } }
   if (Q.length < 3) return null;
+  let A = 0; for (let i = 0; i < Q.length; i++) { const a = Q[i], b = Q[(i + 1) % Q.length]; A += a[0] * b[1] - b[0] * a[1]; } if (A === 0) return null;
   const flat = []; for (const p of Q) flat.push(p[0], p[1]); flat.push(Q[0][0], Q[0][1]); return flat;
 }
+const trapPoly = (t, o) => [[t[o + 2], t[o]], [t[o + 3], t[o]], [t[o + 5], t[o + 1]], [t[o + 4], t[o + 1]]];
 
 // job = {frags, fragGroup, groupClass (Uint16 per group), classDose (Float64, index 1…N), fragField?, fields?, order?}
 export function exportGDS(job, opts = {}) {
@@ -41,13 +45,25 @@ export function exportGDS(job, opts = {}) {
   const classDose = job.share && job.classDose ? Float64Array.from({ length: 2 * N + 1 }, (_, c) => c <= N ? job.classDose[c] : job.classDose[c - N] / 2) : job.classDose;
   const g = new GdsOut();
   g.i16(0x00, 600); g.stamp(0x01); g.str(0x02, libName); g.real8(dbuNm * 1e-3, dbuNm * 1e-9);
-  const layerDt = i => {
-    const c = (groupClass ? groupClass[fragGroup[i]] : 1) + (job.share && job.share[i] ? N : 0), P = job.pass && job.pass[i] ? bulkOffset : 0, L = (layerOut == null ? frags.layer[i] : layerOut) + P;
+  const layerDt = (i, grpOf = null) => {
+    const c = (groupClass ? groupClass[grpOf != null ? grpOf : fragGroup[i]] : 1) + (job.share && job.share[i] ? N : 0), P = job.pass && job.pass[i] ? bulkOffset : 0, L = (layerOut == null ? frags.layer[i] : layerOut) + P;
     if (mode === 'layer') return [layerBase + P + c, 0];
     if (mode === 'raith') return [L, Math.min(32767, Math.max(0, Math.round(1000 * (classDose ? classDose[c] : 1))))];
     return [L, c];
   };
-  const writeFig = i => { const p = trapPts(t, i * 6, k); if (!p) return; const [L, D] = layerDt(i); g.rec(0x08, 0); g.i16(0x0D, L); g.i16(0x0E, D); g.xy(p); g.rec(0x11, 0); };
+  // machine check, filled while writing
+  // thin[pass]: thinner than the beam step (one line of shots); skip[pass]: thinner than half of it (a tool may write none)
+  const R = job.report = { polygons: 0, maxVerts: 0, dropped: 0, droppedArea: 0, minLayer: Infinity, maxLayer: -Infinity, minDt: Infinity, maxDt: -Infinity, thin: [0, 0], skip: [0, 0], chains: 0 };
+  const C = job.chains, written = C ? new Uint8Array(C.chains.length) : null, bss = opts.bss || [0, 0];
+  const writeFig = i => {
+    let P, grpOf = null;
+    if (C && C.chainOf[i] >= 0) { const c = C.chainOf[i]; if (written[c]) return; written[c] = 1; P = chainOutline(t, C.chains[c]); grpOf = C.chainGroup[c]; R.chains++; }
+    else P = trapPoly(t, i * 6);
+    const p = polyPts(P, k); if (!p) { R.dropped++; R.droppedArea += Math.abs(trapArea(t, i * 6)); return; }
+    const [L, D] = layerDt(i, grpOf); g.rec(0x08, 0); g.i16(0x0D, L); g.i16(0x0E, D); g.xy(p); g.rec(0x11, 0);
+    R.polygons++; R.maxVerts = Math.max(R.maxVerts, p.length / 2 - 1); R.minLayer = Math.min(R.minLayer, L); R.maxLayer = Math.max(R.maxLayer, L); R.minDt = Math.min(R.minDt, D); R.maxDt = Math.max(R.maxDt, D);
+    if (!grpOf) { const o = i * 6, h = t[o + 1] - t[o], w = h > 0 ? trapArea(t, o) / h : 0, ps = job.pass && job.pass[i] ? 1 : 0, m = Math.min(h, w); if (bss[ps] > 0 && m < bss[ps]) { R.thin[ps]++; if (m < bss[ps] / 2) R.skip[ps]++; } }
+  };
   const seq = job.seq || (job.fragField && job.order ? orderByField(job) : null);
   if (cellPerField && job.fragField && job.fields) {
     const byField = new Map(), order = [];

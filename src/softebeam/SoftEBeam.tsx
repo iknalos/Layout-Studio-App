@@ -21,6 +21,13 @@ function turbo(t) { // polynomial approximation of the Turbo colormap
     clamp255(27.2 + t * (3211.1 - t * (15327.97 - t * (27814 - t * (22569.18 - t * 6838.66)))))];
 }
 const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
+// nearest points of two trapezoids (vertex-to-edge, both ways) → [x0, y0, x1, y1]
+function nearestPoints(t, a, b) {
+  const A = [t[a * 6 + 2], t[a * 6], t[a * 6 + 3], t[a * 6], t[a * 6 + 5], t[a * 6 + 1], t[a * 6 + 4], t[a * 6 + 1]], B = [t[b * 6 + 2], t[b * 6], t[b * 6 + 3], t[b * 6], t[b * 6 + 5], t[b * 6 + 1], t[b * 6 + 4], t[b * 6 + 1]];
+  let best = Infinity, r = [A[0], A[1], B[0], B[1]];
+  const test = (P, Q, flip) => { for (let i = 0; i < 8; i += 2) for (let j = 0; j < 8; j += 2) { const k = (j + 2) % 8, dx = Q[k] - Q[j], dy = Q[k + 1] - Q[j + 1], L = dx * dx + dy * dy; let u = L > 0 ? ((P[i] - Q[j]) * dx + (P[i + 1] - Q[j + 1]) * dy) / L : 0; u = u < 0 ? 0 : u > 1 ? 1 : u; const qx = Q[j] + u * dx, qy = Q[j + 1] + u * dy, d = (qx - P[i]) ** 2 + (qy - P[i + 1]) ** 2; if (d < best) { best = d; r = flip ? [qx, qy, P[i], P[i + 1]] : [P[i], P[i + 1], qx, qy]; } } };
+  test(A, B, false); test(B, A, true); return r;
+}
 const col32 = col => { const m = col.match(/\d+/g); if (col[0] === '#') { const v = parseInt(col.slice(1, 7), 16); return (255 << 24 | (v & 255) << 16 | ((v >> 8) & 255) << 8 | (v >> 16)) >>> 0; } return (255 << 24 | (+m[2]) << 16 | (+m[1]) << 8 | (+m[0])) >>> 0; };
 const ORDER_BINS = 48, orderCol = b => rgb(turbo(0.06 + 0.88 * b / (ORDER_BINS - 1)));
 const download = (data, name, type = 'application/octet-stream') => { const u = URL.createObjectURL(new Blob([data], { type })); Object.assign(document.createElement('a'), { href: u, download: name }).click(); setTimeout(() => URL.revokeObjectURL(u), 2000); };
@@ -159,7 +166,11 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     if (!fields || !fields.seq) return null; const t = fields.frags.t, n = fields.frags.n, cx = new Float64Array(n), cy = new Float64Array(n), rank = new Int32Array(n);
     for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); }
     fields.seq.forEach((i, p) => { rank[i] = p; });
-    return { cx, cy, rank, seq: fields.seq, N: n };
+    // each jump drawn between the nearest points of two consecutive figures (where the beam actually has to move;
+    // touching neighbours need no jump), not centre to centre
+    const seq = fields.seq, jump = new Float32Array(4 * n);
+    for (let p = 1; p < n; p++) { const r = nearestPoints(t, seq[p - 1], seq[p]); jump.set(r, 4 * p); }
+    return { cx, cy, rank, seq, N: n, jump };
   }, [fields]);
   const [playK, setPlayK] = useState(null), [playing, setPlaying] = useState(false), [dur, setDur] = useState(10), kRef = useRef(0), playOn = playK != null;
   useEffect(() => { setPlaying(false); setPlayK(null); }, [orderData]);
@@ -256,8 +267,8 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       else paint(t, Array.from({ length: ORDER_BINS }, (_, b) => { const a0 = Math.floor(b * N / ORDER_BINS), a1 = Math.floor((b + 1) * N / ORDER_BINS); return { col: orderCol(b), n: a1 - a0, at: k => seq[a0 + k] }; }));
       if (fields.fieldsOn) { ctx.strokeStyle = 'rgba(194,65,12,.55)'; ctx.lineWidth = 1; ctx.setLineDash([5, 3]); for (const f of fields.fields) ctx.strokeRect(X(f.x0), Y(f.y1), (f.x1 - f.x0) * s, (f.y1 - f.y0) * s); ctx.setLineDash([]); }
       if (overlays.path && K > 1) {
-        const stp = Math.max(1, Math.ceil(N / 40000)), ff = fields.fragField; ctx.strokeStyle = 'rgba(17,24,39,.6)'; ctx.lineWidth = 0.9; ctx.beginPath();
-        let pf = -1; for (let p = 0; p < K; p += stp) { const i = seq[p], x = X(cx[i]), y = Y(cy[i]); if (p && ff[i] === pf) ctx.lineTo(x, y); else ctx.moveTo(x, y); pf = ff[i]; } ctx.stroke();
+        const ff = fields.fragField, J = orderData.jump; ctx.strokeStyle = 'rgba(17,24,39,.6)'; ctx.lineWidth = 0.9; ctx.beginPath();
+        for (let p = 1, ns = 0; p < K && ns < 80000; p++) { if (ff[seq[p - 1]] !== ff[seq[p]]) continue; const o = 4 * p, x0 = X(J[o]), y0 = Y(J[o + 1]), x1 = X(J[o + 2]), y1 = Y(J[o + 3]); if (Math.abs(x1 - x0) + Math.abs(y1 - y0) < 1.5 || Math.max(x0, x1) < 0 || Math.min(x0, x1) > size.w || Math.max(y0, y1) < 0 || Math.min(y0, y1) > size.h) continue; ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ns++; } ctx.stroke();
         ctx.strokeStyle = 'rgba(194,65,12,.9)'; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath();
         for (let p = 1; p < K; p++) { const a = seq[p - 1], b2 = seq[p]; if (ff[a] !== ff[b2]) { ctx.moveTo(X(cx[a]), Y(cy[a])); ctx.lineTo(X(cx[b2]), Y(cy[b2])); } } ctx.stroke(); ctx.setLineDash([]);
       }
@@ -311,10 +322,10 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       if (any) ctx.fill(); a = Math.max(e, a + 1);
     }
     if (overlays.path && K > st.k) {
-      const stp = Math.max(1, Math.ceil(N / 40000)); ctx.lineWidth = 0.9; ctx.beginPath(); ctx.strokeStyle = 'rgba(17,24,39,.6)';
-      const jumps = []; let pt = st.pt;
-      for (let q = st.k; q < K; q++) { const i = seq[q]; if (pt && ff[i] !== pt[2]) jumps.push([pt[0], pt[1], cx[i], cy[i]]); if (q % stp && q !== K - 1 && !(pt && ff[i] !== pt[2])) continue; const x = X(cx[i]), y = Y(cy[i]); if (pt && ff[i] === pt[2]) { ctx.moveTo(X(pt[0]), Y(pt[1])); ctx.lineTo(x, y); } pt = [cx[i], cy[i], ff[i]]; }
-      ctx.stroke(); st.pt = pt;
+      const J = orderData.jump; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.strokeStyle = 'rgba(17,24,39,.6)';
+      const jumps = [];
+      for (let q = Math.max(1, st.k); q < K; q++) { const a = seq[q - 1], i = seq[q]; if (ff[a] !== ff[i]) { jumps.push([cx[a], cy[a], cx[i], cy[i]]); continue; } const o = 4 * q, x0 = X(J[o]), y0 = Y(J[o + 1]), x1 = X(J[o + 2]), y1 = Y(J[o + 3]); if (Math.abs(x1 - x0) + Math.abs(y1 - y0) >= 1.5) { ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); } }
+      ctx.stroke();
       if (jumps.length) { ctx.strokeStyle = 'rgba(194,65,12,.9)'; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]); ctx.beginPath(); for (const [a, b2, c2, d] of jumps) { ctx.moveTo(X(a), Y(b2)); ctx.lineTo(X(c2), Y(d)); } ctx.stroke(); ctx.setLineDash([]); }
     }
     st.k = K;
@@ -387,7 +398,7 @@ const MODULES = [
   { id: 'export', icon: '📤', name: 'Export', what: 'Write GDSII with dose classes, a dose table, and estimate dwell and write time.' },
 ];
 const STAGES = ['import', 'fracture', 'analyze', 'pec', 'fields'];
-const FIG_ORDERS = [['shapes', 'Shape by shape (follow geometry)'], ['raster', 'Raster rows (like reading)'], ['meander', 'Meander rows (serpentine)'], ['nearest', 'Shortest path (fewest long jumps)'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
+const FIG_ORDERS = [['meander', 'Horizontal rows, serpentine'], ['meanderV', 'Vertical columns, serpentine'], ['raster', 'Horizontal rows, one direction'], ['shapes', 'Follow the structure (waveguides, rings)'], ['nearest', 'Shortest path'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
 const stageOf = id => ({ import: 'import', extract: 'import', bias: 'import', fracture: 'fracture', analyze: 'analyze', psf: 'pec', pec: 'pec', fields: 'fields', sim: 'pec', export: 'pec' })[id];
 const AN_COL = ['#dc2626', '#f59e0b', '#93c5fd'];
 const PLACE_LABEL = { adaptive: 'whole devices / adaptive', grid: 'fixed grid' };
@@ -411,7 +422,7 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes', placement: 'plan', mergeFigs: true,
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'meander', figOrderV: 2, placement: 'plan', mergeFigs: true, slivers: true,
   anCrit: 150, anKeep: 1000, anFine: 3000, anSleeve: 500, mSizes: '100, 200, 500, 1000', dacBits: 20, priority: 'balanced', planPick: 0,
   passMode: 'plan', iBulk: 20, bssBulk: 40, tSwitch: 5, tField: 1, bulkOffset: 100,
   simPitch: 0, simThr: 0.5, simCompare: true,
@@ -420,7 +431,7 @@ const DEFAULTS = {
 
 export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) {
   const call = useEngine();
-  const saved = useMemo(() => { const s = lsGet(); if (s && s.anCrit == null) s.placement = 'plan'; return s; }, []); // flows saved before Analyze existed
+  const saved = useMemo(() => { const s = lsGet(); if (s && s.anCrit == null) s.placement = 'plan'; if (s && s.figOrderV !== 2) { s.figOrder = 'meander'; s.figOrderV = 2; } return s; }, []); // flows saved before Analyze / row order existed
   const [P, setP] = useState(() => ({ ...DEFAULTS, ...(saved || {}), mc: { ...DEFAULTS.mc, ...((saved && saved.mc) || {}) }, manual: { ...DEFAULTS.manual, ...((saved && saved.manual) || {}) }, top: '', layers: null }));
   const [sel, setSel] = useState('import');
   const [meta, setMeta] = useState(null); // {tops, layers, cells, name}
@@ -434,7 +445,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   const [err, setErr] = useState({});
   const [view, setView] = useState('layout');
   const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true, stitches: true, zones: true, devices: true, steps: true });
-  const [plans, setPlansS] = useState(null), plansRef = useRef(null), [showAllPlans, setShowAllPlans] = useState(false);
+  const [plans, setPlansS] = useState(null), plansRef = useRef(null), [showAllPlans, setShowAllPlans] = useState(false), [expReport, setExpReport] = useState(null);
   const setPlans = v => { plansRef.current = v; setPlansS(v); };
   const [simBox, setSimBox] = useState(null);
   const [viewWin, setViewWin] = useState(null);
@@ -476,10 +487,10 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
 
   // automatic fragmentation sizes from the PSF (edge strip ≈ 3·α_eff, interior ≈ β/10)
   const frag = useMemo(() => {
-    if (!P.fragAuto || !psfSummary) return { fragMax: P.fragMax, edgeW: P.edgeW, smallSize: P.smallSize, sleeve: +P.anSleeve };
+    if (!P.fragAuto || !psfSummary) return { fragMax: P.fragMax, edgeW: P.edgeW, smallSize: P.smallSize, sleeve: +P.anSleeve, minFig: +P.bss };
     const edgeW = Math.round(Math.min(250, Math.max(20, 3 * psfSummary.aEff))), fragMax = Math.round(Math.min(5000, Math.max(4 * edgeW, psfSummary.beta / 10)));
-    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW), sleeve: +P.anSleeve }; // sleeve: PEC pieces also end where the bulk pass begins
-  }, [P.fragAuto, P.fragMax, P.edgeW, P.smallSize, P.anSleeve, psfSummary]);
+    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW), sleeve: +P.anSleeve, minFig: +P.bss }; // sleeve: PEC pieces also end where the bulk pass begins; minFig: slivers share a neighbour's dose
+  }, [P.fragAuto, P.fragMax, P.edgeW, P.smallSize, P.anSleeve, P.bss, psfSummary]);
 
   // ── write plans ────────────────────────────────────────
   const sizes = useMemo(() => parseSizes(P.mSizes), [P.mSizes]);
@@ -547,7 +558,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         setStatus(r.corrected ? `PEC: ${fmtN(r.nFrags)} figures, ${fmtN(r.nGroups)} dose groups, ${r.nClasses} classes; converged to ${pct(r.maxErr)} in ${r.iters} iterations.` : `Dose 1.0 assigned to ${fmtN(r.nFrags)} figures (PEC off).`);
       } else if (st === 'fields') {
         const plan = P.placement === 'plan' ? chosenNow() : null, ps = P.passMode === 'split' || (P.passMode === 'plan' && !!plan && plan.passes === 'split');
-        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement, plan: plan && { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes: ps, merge: P.mergeFigs }, m => setProg({ label: m.label, p: null }));
+        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement, plan: plan && { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes: ps, merge: P.mergeFigs, slivers: P.slivers, bss: [+P.bss, ps ? +P.bssBulk : +P.bss] }, m => setProg({ label: m.label, p: null }));
         setRes(x => ({ ...x, fields: r })); setView('order');
         setStatus(`${P.fieldsOn ? `${r.placementUsed}: ${r.nFields} fields of ${r.size / 1000} µm, ${r.stitches} stitches (${r.critCut} through critical spots), ` : ''}${fmtN(r.n)} figures${r.nBefore > r.n ? ` (merged from ${fmtN(r.nBefore)})` : ''}${r.passes ? ', fine pass first' : ''}. Press ▶ in the viewer to watch the writing order.`);
       }
@@ -582,8 +593,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     if (!(await runTo('fields'))) return;
     setRunning('export');
     try {
-      const r = await call('export', { opts: { mode: P.expMode, layerOut: P.layerKeep ? null : +P.layerOut, layerBase: +P.layerBase, cellPerField: P.fieldsOn && P.cellPerField, useFields: P.fieldsOn, dbuNm: 1, libName: 'SOFTEBEAM', top: (P.top || 'TOP').slice(0, 32), bulkOffset: +P.bulkOffset }, baseDose: +P.baseDose || null });
+      const r = await call('export', { opts: { mode: P.expMode, layerOut: P.layerKeep ? null : +P.layerOut, layerBase: +P.layerBase, cellPerField: P.fieldsOn && P.cellPerField, useFields: P.fieldsOn, dbuNm: 1, libName: 'SOFTEBEAM', top: (P.top || 'TOP').slice(0, 32), bulkOffset: +P.bulkOffset, bss: [+P.bss, usePasses ? +P.bssBulk : +P.bss] }, baseDose: +P.baseDose || null });
       download(r.bytes, `${P.fileName || 'softebeam'}.gds`); download(r.table, `${P.fileName || 'softebeam'}_dose_table.txt`, 'text/plain');
+      setExpReport({ ...r.report, kB: r.bytes.length / 1024, mode: P.expMode });
       setStatus(`Exported ${P.fileName}.gds (${(r.bytes.length / 1024).toFixed(0)} kB) and the dose table.`);
     } catch (e) { setStatus('⚠ Export: ' + e.message); }
     setRunning(null);
@@ -842,12 +854,15 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           {P.fieldsOn && (P.placement === 'grid' || P.placement === 'gridOpt') && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
           <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
           <Chk label="Merge same-dose neighbours" checked={P.mergeFigs} onChange={v => set('fields', 'mergeFigs', v)} hint="PEC needs small pieces to vary the dose; the machine does not. Neighbours in the same dose class, field and pass are joined back into whole trapezoids." />
+          <Chk label="Merge slivers thinner than the beam step" checked={P.slivers} onChange={v => set('fields', 'slivers', v)} hint="A tool cannot fill a figure thinner than its beam step (one line of shots or none). Each sliver joins the neighbour it shares an edge with (dose classes within 2 %); stacked slivers become one convex polygon." />
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><Chk label="figure jumps" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} /><Chk label="beam steps" checked={overlays.steps} onChange={v => setOverlays(o => ({ ...o, steps: v }))} hint="Zoom in: dots = beam positions at the beam step size inside each figure" /><Chk label="stitches" checked={overlays.stitches} onChange={v => setOverlays(o => ({ ...o, stitches: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
         </Sec>
         {res.fields && <Sec title="Result">
           {res.fields.fieldsOn && <><KV k="Placement" v={res.fields.placementUsed} /><KV k="Fields used" v={res.fields.nFields} />
             <KV k="Stitches (pattern cut by a field edge)" v={res.fields.stitches} tone={C.beam} /><KV k="…through critical spots" v={res.fields.critCut} tone={res.fields.critCut ? C.bad : C.ok} /><KV k="Stitch risk (waveguide-stitch equivalents)" v={res.fields.stitchCost.toFixed(2)} /><KV k="Stitched length" v={fmtLen(res.fields.cutLen)} /><KV k="Stage travel" v={fmtLen(res.fields.stageTravel)} /></>}
-          <KV k="Figures" v={`${fmtN(res.fields.n)}${res.fields.nBefore > res.fields.n ? ` (merged from ${fmtN(res.fields.nBefore)})` : ''}`} />{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
+          <KV k="Polygons written" v={`${fmtN(res.fields.nPolygons)}${res.fields.nBefore > res.fields.nPolygons ? ` (from ${fmtN(res.fields.nBefore)} PEC pieces)` : ''}`} />
+          <KV k="Thinner than the beam step (1 line of shots)" v={`${fmtN(res.fields.thinAfter)}${res.fields.thinBefore !== res.fields.thinAfter ? ` (was ${fmtN(res.fields.thinBefore)})` : ''}`} />
+          <KV k="…thinner than half of it (may be skipped)" v={fmtN(res.fields.skipAfter)} tone={res.fields.skipAfter ? C.warn : C.ok} />{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
           {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>critical</th><th>risk</th><th>fields</th></tr></thead>
             <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.crit}</td><td>{c.cost.toFixed(2)}</td><td>{c.fields}</td></tr>)}</tbody></table>}
           <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>
@@ -894,6 +909,18 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
             {!writeEst.passes && <KV k="Beam-on time" v={fmtTime(writeEst.t)} />}{writeEst.tmin < P.minDwell && <Note tone={C.bad}>Shortest dwell is below the machine limit: lower the current or enlarge the step (minimum step ≈ {Math.sqrt(P.current / (pecR.classDose[1] * P.baseDose * 0.01) * P.minDwell).toFixed(1)} nm).</Note>}</> : <Note>Run PEC to see dwell times.</Note>}
         </Sec>
         <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}><Btn primary onClick={doExport} disabled={!meta || !!running}>⬇ Export GDS + dose table</Btn></div>
+        {expReport && <Sec title="Machine check (last export)">
+          {(() => { const R = expReport, ok = (c, t, bad) => <div style={{ fontSize: 12, margin: '3px 0', color: c ? C.ink : C.warn }}>{c ? '✓' : '⚠'} {c ? t : bad}</div>, wide = R.maxLayer > 255 || (R.mode !== 'raith' && R.maxDt > 255);
+            return <>
+              {ok(true, `Valid GDSII: ${fmtN(R.polygons)} closed polygons (${(R.kB / 1024).toFixed(1)} MB)`)}
+              {ok(R.maxVerts <= 200, `At most ${R.maxVerts} vertices per polygon (≤ 200 suits every tool)`, `Up to ${R.maxVerts} vertices per polygon: tools with a 200-vertex limit will reject some`)}
+              {ok(!wide, `Layers ${R.minLayer}–${R.maxLayer}, datatypes ${R.minDt}–${R.maxDt}${R.mode === 'raith' ? ' (Raith dose convention)' : ' (all ≤ 255)'}`, `Layers ${R.minLayer}–${R.maxLayer}, datatypes ${R.minDt}–${R.maxDt}: above 255, which some tools reject; use coarser dose steps or the Raith format`)}
+              {ok(!R.skip[0] && !R.skip[1], `No figure thinner than half its beam step${R.thin[0] + R.thin[1] ? ` (${fmtN(R.thin[0] + R.thin[1])} get a single line of shots)` : ''}`, `${fmtN(R.skip[0] + R.skip[1])} figures thinner than half their beam step: a tool may write no shots there (no neighbour with a close dose to merge with)`)}
+              {ok(R.droppedArea < 1000, R.dropped ? `${R.dropped} pieces thinner than the 1 nm database grid left out (${(R.droppedArea / 1e6).toFixed(5)} µm², negligible)` : 'Nothing lost to the 1 nm database grid', `${R.dropped} pieces thinner than the 1 nm database grid left out (${(R.droppedArea / 1e6).toFixed(4)} µm²)`)}
+              {R.chains > 0 && ok(true, `${fmtN(R.chains)} sliver stacks written as single polygons`)}
+            </>; })()}
+          <Note>Before the first real exposure, check the dose mapping once on your tool (expose a few classes and compare), and that the tool reads the bulk-pass layer with its own current.</Note>
+        </Sec>}
         <Note>Dose classes go in the GDS datatype (or layer). Import the GDS in your tool and map datatype → dose with the table. The Raith option writes datatype = round(1000 × dose factor), the convention of the open-source Raith_GDSII toolbox; check it against your tool once with a dose test.</Note>
       </>;
       default: return null;

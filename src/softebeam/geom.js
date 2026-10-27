@@ -562,10 +562,14 @@ export function fieldSequence(NX, NY, traversal = 'meanderX', start = 'bl') {
 }
 
 // Figure order inside every field, fields visited in fieldSeq.
-// figOrder: 'meander' (horizontal rows, serpentine), 'meanderV' (vertical columns, serpentine), 'raster' (rows, one direction),
-// 'shapes' (follow the structure), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
+// figOrder: 'auto' (by geometry: each structure followed or written in rows, whichever jumps less), 'meander' (horizontal
+// rows, serpentine), 'meanderV' (vertical columns, serpentine), 'raster' (rows, one direction), 'shapes' (always follow the
+// structure), 'nearest' (greedy shortest jumps), 'centerOut', 'outsideIn', 'dose'
+// The beam is blanked between any two figures; what costs settling time (and placement error when it is too short) is
+// the length of the move. A move longer than LONG_NM counts as JUMP_NM of extra travel when orders are compared.
+export const LONG_NM = 1000, JUMP_NM = 2000;
 export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 'raster', start = 'bl', band = 0, dose = null, dist = null, adj = null } = {}) {
-  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n), loc = adj ? new Int32Array(n).fill(-1) : null; let hs = 0;
+  const n = frags.n, t = frags.t, cx = new Float64Array(n), cy = new Float64Array(n), loc = adj ? new Int32Array(n).fill(-1) : null; let hs = 0, followed = 0, inRows = 0;
   for (let i = 0; i < n; i++) { const o = i * 6; cx[i] = 0.25 * (t[o + 2] + t[o + 3] + t[o + 4] + t[o + 5]); cy[i] = 0.5 * (t[o] + t[o + 1]); hs += t[o + 1] - t[o]; }
   let ws = 0; for (let i = 0; i < n; i++) { const o = i * 6; ws += Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4]); }
   const B = band > 0 ? band : Math.max(1, hs / Math.max(1, n)), Bw = band > 0 ? band : Math.max(1, ws / Math.max(1, n)); // row height / column width = mean figure size
@@ -582,20 +586,22 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
       const rk = new Map(); [...new Set(idx.map(row))].sort((a, b) => a - b).forEach((r, k) => rk.set(r, k));
       idx.sort((a, b) => (row(a) - row(b)) || (rk.get(row(a)) % 2 ? -1 : 1) * sx * (cx[a] - cx[b])); }
     else if (figOrder === 'centerOut' || figOrder === 'outsideIn') { const mx = (F.x0 + F.x1) / 2, my = (F.y0 + F.y1) / 2, s = figOrder === 'centerOut' ? 1 : -1; idx.sort((a, b) => s * ((cx[a] - mx) ** 2 + (cy[a] - my) ** 2 - (cx[b] - mx) ** 2 - (cy[b] - my) ** 2) || (row(a) - row(b))); }
-    else if (figOrder === 'shapes') { // follow geometry: finish one shape before the next; shapes in rows by their lower edge
+    else if (figOrder === 'shapes' || figOrder === 'auto') { // by structure: finish one shape before the next; shapes in serpentine rows by their lower edge
       const cb = new Map(); for (const i of idx) { const c = frags.comp[i]; let q = cb.get(c); if (!q) cb.set(c, q = [Infinity, Infinity, -Infinity]); q[0] = Math.min(q[0], sx * cx[i]); q[1] = Math.min(q[1], sy * cy[i]); q[2] = Math.max(q[2], sy * cy[i]); }
       const hs = [...cb.values()].map(q => q[2] - q[1]).sort((u, v) => u - v), Bc = Math.max(B, hs[Math.floor(hs.length / 2)] || B);
-      idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb); return (Math.floor(A[1] / Bc) - Math.floor(Q[1] / Bc)) || (A[0] - Q[0]) || (ca - cbb); } return dist ? (dist[a] - dist[b]) || (row(a) - row(b)) : (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
-      // Follow the structure (option for waveguides and rings). Two candidate orders per shape; the one with less beam
-      // travel wins:
+      idx.sort((a, b) => { const ca = frags.comp[a], cbb = frags.comp[b]; if (ca !== cbb) { const A = cb.get(ca), Q = cb.get(cbb), ra = Math.floor(A[1] / Bc); return (ra - Math.floor(Q[1] / Bc)) || (ra & 1 ? Q[0] - A[0] : A[0] - Q[0]) || (ca - cbb); } return dist ? (dist[a] - dist[b]) || (row(a) - row(b)) : (row(a) - row(b)) || sx * (cx[a] - cx[b]); });
+      // Two candidate orders per shape, compared by blanked jumps (JUMP_NM each) plus beam travel between figures:
       //  - walk: figures fall into bands of equal distance from the start of the shape; touching figures of one band form
       //    a cluster (a cross-section of one branch); the walk goes to a touching unvisited cluster and backtracks only
-      //    when a branch ends, so a waveguide is written end to end, a ring once around, each arm of a Y in turn
-      //  - rows: serpentine rows of the typical figure height (best for filled areas such as pad interiors)
-      // Each shape starts from whichever end is nearer the beam, and the nearest unwritten shape comes next.
+      //    when a branch ends, so a waveguide is written end to end, a ring once around, a spiral along its arms, each arm
+      //    of a Y in turn
+      //  - rows: serpentine rows of the typical figure height (filled areas such as pads; rows cross a spiral's arms many
+      //    times, so there the walk wins)
+      // 'auto' keeps rows on a tie, 'shapes' keeps the walk. Each shape starts from whichever end is nearer the beam, and
+      // the nearest unwritten shape comes next.
       if (dist) {
         let px = sx < 0 ? F.x1 : F.x0, py = sy < 0 ? F.y1 : F.y0;
-        const cost = (ord, x, y) => { if (!ord.length) return 0; let c = Math.hypot(cx[ord[0]] - x, cy[ord[0]] - y); for (let k = 1; k < ord.length; k++) c += trapGap(t, ord[k - 1], ord[k]); return c; };
+        const cost = (ord, x, y) => { if (!ord.length) return 0; let c = Math.hypot(cx[ord[0]] - x, cy[ord[0]] - y); for (let k = 1; k < ord.length; k++) { const g = trapGap(t, ord[k - 1], ord[k]); c += g > LONG_NM ? g + JUMP_NM : g; } return c; };
         const axisSort = (list, x, y) => { // along the principal axis, from the end nearer to (x, y)
           if (list.length > 1) {
             let mx = 0, my = 0; for (const i of list) { mx += cx[i]; my += cy[i]; } mx /= list.length; my /= list.length;
@@ -605,6 +611,24 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
             const f0 = list[0], f1 = list[list.length - 1]; if ((cx[f1] - x) ** 2 + (cy[f1] - y) ** 2 < (cx[f0] - x) ** 2 + (cy[f0] - y) ** 2) list.reverse();
           }
           return list;
+        };
+        // one cluster (a slice of the structure), edge to edge: start at the figure nearest the beam (the one furthest back
+        // along the structure on a tie), then go to a touching figure: the one with the fewest unwritten touching figures left
+        // (so none is stranded), then the one furthest back (so the slice ends on its forward side), then the nearer
+        let dir = 1; const back = i => dir * dist[i];
+        const chainOrder = (list, prev, x, y) => {
+          const m = list.length; if (m <= 1) return list; if (m > 256) return axisSort(list.slice(), x, y);
+          list.forEach((i, k) => { loc[i] = k; });
+          const used = new Uint8Array(m), out = [], free = j => { let c = 0; for (let e = adj.start[j]; e < adj.start[j + 1]; e++) { const q = loc[adj.nb[e]]; if (q >= 0 && !used[q]) c++; } return c; };
+          let c = -1, bd = Infinity, bb = Infinity; for (let k = 0; k < m; k++) { const i = list[k], d = prev >= 0 ? trapGap(t, prev, i) : Math.hypot(cx[i] - x, cy[i] - y); if (d < bd - 1 || (d <= bd + 1 && back(i) < bb)) { bd = Math.min(bd, d); bb = back(i); c = k; } }
+          while (c >= 0) {
+            used[c] = 1; const i = list[c]; out.push(i); let nx = -1, nf = Infinity, nb = Infinity, nd = Infinity;
+            for (let e = adj.start[i]; e < adj.start[i + 1]; e++) { const q = loc[adj.nb[e]]; if (q < 0 || used[q]) continue; const j = list[q], f = free(j), b = back(j), d = (cx[j] - cx[i]) ** 2 + (cy[j] - cy[i]) ** 2; if (f < nf || (f === nf && (b < nb - 1 || (b <= nb + 1 && d < nd)))) { nf = f; nb = b; nd = d; nx = q; } }
+            if (nx < 0) for (let k = 0; k < m; k++) if (!used[k]) { const d = trapGap(t, i, list[k]); if (d < nd) { nd = d; nx = k; } }
+            c = nx;
+          }
+          list.forEach(i => { loc[i] = -1; });
+          return out;
         };
         const walk = (run, band, startK, x0, y0) => {
           const m = run.length, out = []; let x = x0, y = y0;
@@ -617,13 +641,24 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
           const C = mem.length, nbs = Array.from({ length: C }, () => new Set()), ccx = new Float64Array(C), ccy = new Float64Array(C);
           for (let k = 0; k < m; k++) { const i = run[k]; ccx[cid[k]] += cx[i] / mem[cid[k]].length; ccy[cid[k]] += cy[i] / mem[cid[k]].length; for (let e = adj.start[i]; e < adj.start[i + 1]; e++) { const q = loc[adj.nb[e]]; if (q >= 0 && cid[q] !== cid[k]) nbs[cid[k]].add(cid[q]); } }
           run.forEach(i => { loc[i] = -1; });
-          const seen = new Uint8Array(C), stack = []; let cur = cid[startK], left = C;
-          const nearest = cs => { let best = -1, bd = Infinity; for (const c of cs) if (!seen[c]) { const d = (ccx[c] - x) ** 2 + (ccy[c] - y) ** 2; if (d < bd) { bd = d; best = c; } } return best; };
+          const seen = new Uint8Array(C), stack = []; let cur = cid[startK], left = C, last = -1;
+          // distance from the beam to a cluster: nearest points of the last written figure and the cluster's figures
+          const gapTo = c => { const L = mem[c]; if (last < 0 || L.length > 64) return Math.hypot(ccx[c] - x, ccy[c] - y); let g = Infinity; for (const i of L) { g = Math.min(g, trapGap(t, last, i)); if (g <= 1) break; } return g; };
+          // At a fork the smaller branch goes first (e.g. the rest of a pad outline before the waveguide that leaves it), so
+          // the walk never comes back from far away; branches larger than REACH clusters count as equal, then the nearer.
+          const REACH = 1000, stamp = new Int32Array(C), bq = new Int32Array(C); let st = 0;
+          const reach = (c0, from) => { st++; stamp[from] = st; stamp[c0] = st; let h = 0, tl = 0; bq[tl++] = c0; while (h < tl && tl < REACH) { for (const d of nbs[bq[h++]]) if (!seen[d] && stamp[d] !== st) { stamp[d] = st; bq[tl++] = d; if (tl >= REACH) break; } } return tl; };
+          const nearest = (cs, from) => { let best = -1, bd = Infinity, bs = Infinity, un = 0; for (const c of cs) if (!seen[c]) un++; if (!un) return -1;
+            for (const c of cs) if (!seen[c]) { const sz = un > 1 ? reach(c, from) : 0, d = gapTo(c); if (sz < bs || (sz === bs && d < bd)) { bs = sz; bd = d; best = c; } } return best; };
+          const emit = c => { seen[c] = 1; left--; for (const i of chainOrder(mem[c], last, x, y)) out.push(i); last = out[out.length - 1]; x = cx[last]; y = cy[last]; };
           while (cur >= 0) {
-            seen[cur] = 1; left--; for (const i of axisSort(mem[cur].slice(), x, y)) out.push(i); const l = out[out.length - 1]; x = cx[l]; y = cy[l]; stack.push(cur);
-            let nx = nearest(nbs[cur]);
-            while (nx < 0 && stack.length) { stack.pop(); if (stack.length) nx = nearest(nbs[stack[stack.length - 1]]); } // branch ended: back to the last fork
-            if (nx < 0 && left > 0) nx = nearest(Array.from({ length: C }, (_, c) => c)); // a separate piece of the shape
+            emit(cur); stack.push(cur);
+            // dead ends next to this cluster (e.g. the sliver at the end of a slab row) are written now, not on the way
+            // back after the whole structure
+            for (let again = true; again;) { again = false; for (const c of nbs[cur]) { if (seen[c]) continue; let other = false; for (const d of nbs[c]) if (d !== cur && !seen[d]) { other = true; break; } if (!other) { emit(c); again = true; } } }
+            let nx = nearest(nbs[cur], cur);
+            while (nx < 0 && stack.length) { stack.pop(); if (stack.length) nx = nearest(nbs[stack[stack.length - 1]], stack[stack.length - 1]); } // branch ended: back to the last fork
+            if (nx < 0 && left > 0) { let bd = Infinity; for (let c = 0; c < C; c++) if (!seen[c]) { const d = (ccx[c] - x) ** 2 + (ccy[c] - y) ** 2; if (d < bd) { bd = d; nx = c; } } } // a separate piece of the shape
             cur = nx;
           }
           return out;
@@ -644,10 +679,14 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
           if (nn) { let bd = Infinity; for (let q = 0; q < runs.length; q++) if (!done[q]) { const R = runs[q]; for (const i of [R[0], R[R.length - 1]]) { const d = (cx[i] - px) ** 2 + (cy[i] - py) ** 2; if (d < bd) { bd = d; pick = q; } } } }
           done[pick] = 1; const run = runs[pick], m = run.length;
           const ext = []; for (const i of run) { const o = i * 6; ext.push(Math.max(t[o + 1] - t[o], Math.max(t[o + 3], t[o + 5]) - Math.min(t[o + 2], t[o + 4]))); }
-          ext.sort((u, v) => u - v); const Bd = Math.max(1e-6, 1.5 * ext[ext.length >> 1]), band = Int32Array.from(run, i => Math.floor(dist[i] / Bd));
+          ext.sort((u, v) => u - v);
+          // band = a slice along the structure: a few times its width (area / length along it), at least 1.5 figure sizes
+          let ar = 0, d0 = Infinity, d1 = -Infinity; for (const i of run) { ar += trapArea(t, i * 6); d0 = Math.min(d0, dist[i]); d1 = Math.max(d1, dist[i]); }
+          const Bd = Math.max(1e-6, 1.5 * ext[ext.length >> 1], d1 > d0 ? 4 * ar / (d1 - d0) : 0), band = Int32Array.from(run, i => Math.floor(dist[i] / Bd));
           const fromFar = (cx[run[m - 1]] - px) ** 2 + (cy[run[m - 1]] - py) ** 2 < (cx[run[0]] - px) ** 2 + (cy[run[0]] - py) ** 2;
-          let best = walk(run, band, fromFar ? m - 1 : 0, px, py);
-          if (m > 3) { const alt = rows(run, px, py); if (cost(alt, px, py) < cost(best, px, py)) best = alt; }
+          dir = fromFar ? -1 : 1; let best = walk(run, band, fromFar ? m - 1 : 0, px, py), isRows = false;
+          if (m > 3) { const alt = rows(run, px, py), ca = cost(alt, px, py), cw = cost(best, px, py); if (figOrder === 'auto' ? ca <= cw : ca < cw) { best = alt; isRows = true; } }
+          if (isRows) inRows++; else followed++;
           for (const i of best) res.push(i); const l = best[best.length - 1]; px = cx[l]; py = cy[l];
         }
         for (let k = 0; k < res.length; k++) idx[k] = res[k];
@@ -658,10 +697,10 @@ export function figureSequence(frags, fragField, fields, fieldSeq, { figOrder = 
     else idx.sort((a, b) => (row(a) - row(b)) || sx * (cx[a] - cx[b]));
     for (const i of idx) seq[p++] = i;
   }
-  // beam travel between consecutive figure centres
-  let travel = 0, jumpMax = 0, fieldJumps = 0;
-  for (let k = 1; k < p; k++) { const a = seq[k - 1], b = seq[k], d = Math.hypot(cx[b] - cx[a], cy[b] - cy[a]); travel += d; if (fragField[a] !== fragField[b]) fieldJumps++; else jumpMax = Math.max(jumpMax, d); }
-  return { seq, travel, jumpMax, fieldJumps };
+  // beam travel between consecutive figure centres; jumps = moves longer than LONG_NM between figures of one field
+  let travel = 0, jumpMax = 0, fieldJumps = 0, jumps = 0;
+  for (let k = 1; k < p; k++) { const a = seq[k - 1], b = seq[k], d = Math.hypot(cx[b] - cx[a], cy[b] - cy[a]); travel += d; if (fragField[a] !== fragField[b]) fieldJumps++; else { jumpMax = Math.max(jumpMax, d); if (trapGap(t, a, b) > LONG_NM) jumps++; } }
+  return { seq, travel, jumpMax, fieldJumps, jumps, followed, inRows };
 }
 
 // distance between two trapezoids (nearest points, vertex-to-edge both ways); 0 when they touch

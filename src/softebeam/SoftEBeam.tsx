@@ -398,7 +398,7 @@ const MODULES = [
   { id: 'export', icon: '📤', name: 'Export', what: 'Write GDSII with dose classes, a dose table, and estimate dwell and write time.' },
 ];
 const STAGES = ['import', 'fracture', 'analyze', 'pec', 'fields'];
-const FIG_ORDERS = [['meander', 'Horizontal rows, serpentine'], ['meanderV', 'Vertical columns, serpentine'], ['raster', 'Horizontal rows, one direction'], ['shapes', 'Follow the structure (waveguides, rings)'], ['nearest', 'Shortest path'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
+const FIG_ORDERS = [['auto', 'By geometry (follows waveguides, spirals, rings; rows for areas)'], ['meander', 'Horizontal rows, serpentine'], ['meanderV', 'Vertical columns, serpentine'], ['raster', 'Horizontal rows, one direction'], ['shapes', 'Always follow the structure'], ['nearest', 'Shortest path'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
 const stageOf = id => ({ import: 'import', extract: 'import', bias: 'import', fracture: 'fracture', analyze: 'analyze', psf: 'pec', pec: 'pec', fields: 'fields', sim: 'pec', export: 'pec' })[id];
 const AN_COL = ['#dc2626', '#f59e0b', '#93c5fd'];
 const PLACE_LABEL = { adaptive: 'whole devices / adaptive', grid: 'fixed grid' };
@@ -427,7 +427,7 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'meander', figOrderV: 2, placement: 'plan', mergeFigs: true, slivers: true, stepFit: true,
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'auto', figOrderV: 3, placement: 'plan', mergeFigs: true, slivers: true, stepFit: true,
   anCrit: 150, anKeep: 1000, anFine: 3000, anSleeve: 500, mSizes: '100, 200, 500, 1000', dacBits: 20, priority: 'balanced', planPick: 0,
   passMode: 'plan', iBulk: 20, bssBulk: 40, tSwitch: 5, tField: 1, bulkOffset: 100,
   simPitch: 0, simThr: 0.5, simCompare: true,
@@ -436,7 +436,7 @@ const DEFAULTS = {
 
 export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) {
   const call = useEngine();
-  const saved = useMemo(() => { const s = lsGet(); if (s && s.anCrit == null) s.placement = 'plan'; if (s && s.figOrderV !== 2) { s.figOrder = 'meander'; s.figOrderV = 2; } return s; }, []); // flows saved before Analyze / row order existed
+  const saved = useMemo(() => { const s = lsGet(); if (s && s.anCrit == null) s.placement = 'plan'; if (s && s.figOrderV !== 3) { s.figOrder = 'auto'; s.figOrderV = 3; } return s; }, []); // flows saved before Analyze / the by-geometry order existed
   const [P, setP] = useState(() => ({ ...DEFAULTS, ...(saved || {}), mc: { ...DEFAULTS.mc, ...((saved && saved.mc) || {}) }, manual: { ...DEFAULTS.manual, ...((saved && saved.manual) || {}) }, top: '', layers: null }));
   const [sel, setSel] = useState('import');
   const [meta, setMeta] = useState(null); // {tops, layers, cells, name}
@@ -861,6 +861,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           <Sel label="Start corner" value={P.start} onChange={v => set('fields', 'start', v)} options={[['tl', 'Top-left (top → bottom)'], ['bl', 'Bottom-left (bottom → top)'], ['tr', 'Top-right'], ['br', 'Bottom-right']]} w={180} />
           {P.fieldsOn && (P.placement === 'grid' || P.placement === 'gridOpt') && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
           <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
+          {P.figOrder === 'auto' && <Note>Each structure in a field is written either along itself (a waveguide end to end, a ring once around, a spiral along its arms) or in serpentine rows (pads, filled areas), whichever needs fewer and shorter jumps; where both are the same (a straight waveguide, a rectangle) rows are kept. Rows across a spiral jump between its arms on every row.</Note>}
           <Chk label="Merge same-dose neighbours" checked={P.mergeFigs} onChange={v => set('fields', 'mergeFigs', v)} hint="PEC needs small pieces to vary the dose; the machine does not. Neighbours in the same dose class, field and pass are joined back into whole trapezoids." />
           <Chk label="Merge slivers thinner than the beam step" checked={P.slivers} onChange={v => set('fields', 'slivers', v)} hint="A tool cannot fill a figure thinner than its beam step (one line of shots or none). Each sliver joins the neighbour it shares an edge with (dose classes within 2 %); stacked slivers become one convex polygon." />
           <Chk label="Whole beam steps" checked={P.stepFit} onChange={v => set('fields', 'stepFit', v)} hint="A tool fills each figure with shots at its beam step. A figure that is not a whole number of steps tall (or wide) gets its last row rounded, which moves that edge by up to half a step and leaves a gap or a double row at every seam. Such figures are split into two of whole steps that overlap by less than one step in the middle; outer edges stay where they are." />
@@ -872,6 +873,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           <KV k="Polygons written" v={`${fmtN(res.fields.nPolygons)}${res.fields.nBefore > res.fields.nPolygons ? ` (from ${fmtN(res.fields.nBefore)} PEC pieces)` : ''}`} />
           <KV k="Thinner than the beam step (1 line of shots)" v={`${fmtN(res.fields.thinAfter)}${res.fields.thinBefore !== res.fields.thinAfter ? ` (was ${fmtN(res.fields.thinBefore)})` : ''}`} />
           <KV k="…thinner than half of it (may be skipped)" v={fmtN(res.fields.skipAfter)} tone={res.fields.skipAfter ? C.warn : C.ok} />{res.fields.stepRows + res.fields.stepCols > 0 && <KV k="Split into whole beam steps" v={`${fmtN(res.fields.stepRows + res.fields.stepCols)} figures`} />}{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
+          {res.fields.jumps != null && <KV k="Jumps longer than 1 µm" v={fmtN(res.fields.jumps)} />}{(res.fields.followed || res.fields.inRows) > 0 && <KV k="Structures followed / written in rows" v={`${fmtN(res.fields.followed)} / ${fmtN(res.fields.inRows)}`} />}
           {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>critical</th><th>risk</th><th>fields</th></tr></thead>
             <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.crit}</td><td>{c.cost.toFixed(2)}</td><td>{c.fields}</td></tr>)}</tbody></table>}
           <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>

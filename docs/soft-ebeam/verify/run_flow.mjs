@@ -1,6 +1,6 @@
 // Run the Soft-EBeam worker headless, exactly as the app does: node run_flow.mjs <file.gds> key=value ...
 // Writes <out>.gds, <out>_dose_table.txt and <out>_figs.json (every written figure, in order, for check_machine.py)
-//   top=CELL layers=1,31 preset=si100hsq blur=15 bss=6 current=8 passes=auto|single|split figOrder=meander
+//   top=CELL layers=1,31 preset=si100hsq blur=15 bss=6 current=8 passes=auto|single|split figOrder=auto|meander|shapes
 //   edgeW=<nm> (default: from the PSF, whole beam steps as in the app) stepFit=0|1 (default 1) out=prefix
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseGDS } from './gdslib.mjs';
@@ -39,8 +39,9 @@ t = T(); const pe = call('pec', { frag, psf, pec: { enabled: A.pec !== '0', mix:
 let dmin = Infinity, dmax = 0; for (const d of pe.classDose) { dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); }
 console.log(`PEC: ${pe.nFrags} pieces, ${pe.nGroups} dose groups, ${pe.nClasses} classes, dose ${dmin.toFixed(3)}..${dmax.toFixed(3)}, max err ${(100 * (pe.maxErr || 0)).toFixed(2)} % in ${pe.iters} it (${(T() - t).toFixed(0)} ms)`);
 const passes = plan.passes === 'split';
-t = T(); const fi = call('fields', { fieldsOn: true, size: plan.size, originMode: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: A.figOrder || 'meander', placement: 'plan', plan: { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes, merge: true, slivers: true, stepFit: A.stepFit !== '0', bss: [bss, passes ? machine.bssBulk : bss] });
+t = T(); const fi = call('fields', { fieldsOn: true, size: plan.size, originMode: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: A.figOrder || 'auto', placement: 'plan', plan: { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes, merge: true, slivers: true, stepFit: A.stepFit !== '0', bss: [bss, passes ? machine.bssBulk : bss] });
 console.log(`fields: plan #${plan.rank} ${fi.placementUsed}, ${fi.nFields} fields of ${fi.size / 1000} µm, ${fi.stitches} stitches (${fi.critCut} critical), ${fi.n} figures (from ${fi.nBefore}), thin ${fi.thinAfter} (was ${fi.thinBefore}), skip-risk ${fi.skipAfter}, whole-step splits ${fi.stepRows}/${fi.stepCols}, passes ${fi.passes} (${(T() - t).toFixed(0)} ms)`);
+console.log(`order ${fi.figOrder}: ${fi.jumps} blanked jumps in fields, ${fi.fieldJumps} field changes, beam travel ${(fi.travel / 1e6).toFixed(1)} mm; structures followed ${fi.followed}, in rows ${fi.inRows}`);
 const ex = call('export', { opts: { mode: 'datatype', layerOut: null, layerBase: 100, cellPerField: false, useFields: true, dbuNm: 1, libName: 'SOFTEBEAM', top: 'TOP', bulkOffset: 100, bss: [bss, passes ? machine.bssBulk : bss] }, baseDose: machine.baseDose });
 writeFileSync(out + '.gds', ex.bytes); writeFileSync(out + '_dose_table.txt', ex.table);
 console.log('export:', ex.bytes.length, 'bytes; machine check', JSON.stringify(ex.report));

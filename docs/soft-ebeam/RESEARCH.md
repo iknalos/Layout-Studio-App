@@ -277,6 +277,29 @@ PSF_k = ΔE_k/(E_tot·π(r_k² − r_{k−1}²)). ≥10⁵ electrons for β/η t
   per-figure round, per-figure floor, step stretched to fit), forward PSF from the shots, backscatter from areas; the
   developed corrugation of the 13 Bragg gratings (ΔW 38–50 nm in 1 nm steps) of the UW test file, Si 100 kV HSQ PSF.
 
+### 5.4 Figure order inside a field
+- **What the order costs.** A vector-scan tool blanks the beam between any two figures and deflects to the next one;
+  the longer the move, the longer it must settle, and too short a settle misplaces the figure (deflector settling-time
+  patents, e.g. US 8,872,139). Pieces of one waveguide written far apart in time also meet with the drift of that time
+  between them (σ_Δ in §5.2). Rows across a spiral cross every arm on every row: on the training spiral (in5, 1000 µm
+  fields) 21 k moves longer than 10 µm and 1.36 m of beam travel, against 16 and 67 mm along the arms.
+- **What practice says.** Stanford SNSF's BEAMER/JEOL report ranks feature sorting "Good: FollowGeometry … Okay:
+  NoCompaction … Terrible: Random"; FollowGeometry "tells the JEOL to write the fractured shapes in an order that
+  follows the waveguide" and "avoids excessive beam deflection movement"; the JEOL only keeps that order with
+  `SRTPRM 0` in the job deck (SNSF final report 2019, pp. 17, 22, 24).
+- **What Soft-EBeam does ('by geometry', the default).** Per structure in a field, two candidates, the cheaper wins
+  (cost = travel between figures + 2 µm extra per move longer than 1 µm; rows on a tie):
+  - *walk*: geodesic distance from one end of the structure (Dijkstra over touching figures); slices 4 widths long
+    (width = area / length along it); touching figures of a slice form a cluster, a cross-section of one branch. The
+    walk goes cluster to touching cluster, writes dead-end clusters (slivers at the end of a slab row) as it passes
+    them, and backtracks only where a branch ends: a waveguide end to end, a ring once around, a spiral along its
+    arms, each arm of a Y in turn. Inside a cluster, figures go edge to edge: next the touching figure with the fewest
+    unwritten touching figures left (Warnsdorff's rule, so none is stranded), then the one furthest back.
+  - *rows*: serpentine rows of the typical figure height (pads, filled areas).
+- **Order before the whole-step split.** The split halves of a figure overlap instead of sharing an edge, so a walk
+  after the split saw the structure in pieces (the top of every spiral arm was left to the very end). The order is
+  found on the unsplit figures; each figure's pieces follow one another, from the end nearer the beam.
+
 ---
 
 ## 6. Key references

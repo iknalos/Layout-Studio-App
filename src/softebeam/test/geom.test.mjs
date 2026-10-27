@@ -143,3 +143,21 @@ console.log(fail ? `${fail} FAILED` : 'ALL PASS');
   }
   console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. field placement)');
 }
+{ // 12: by-geometry order: a spiral is written along its arms, a pad in rows
+  const { fragmentAdjacency, structureSeeds, geoDistance, figureSequence, mergeFigures, trapGap, LONG_NM } = await import('../geom.js');
+  const pts = []; for (let a = 0.6; a < 5 * 2 * Math.PI; a += 0.02) { const r = 20000 + 6000 * a; pts.push([Math.round(r * Math.cos(a)), Math.round(r * Math.sin(a))]); }
+  const lib = { dbUnit: 1e-9, cells: [{ name: 'S', elements: [{ type: 'path', layer: 1, width: 1500, xy: pts }, { type: 'boundary', layer: 1, datatype: 0, xy: [[250000, 0], [300000, 0], [300000, 40000], [250000, 40000], [250000, 0]] }] }], cellMap: {} }; lib.cellMap.S = lib.cells[0];
+  const Fl = flattenLib(lib, {}), H = healAndFracture(Fl.rings, Fl.ringLayer), F = fragmentForPEC(H.traps, H.nComp, { fragMax: 3000, edgeW: 30, smallSize: 300 });
+  const fld = new Int32Array(F.frags.n), M = mergeFigures(F.frags, F.fragGroup, fld, i => F.fragGroup[i] % 3), fr = M.frags, ff = new Int32Array(fr.n), fields = [{ x0: -1e6, y0: -1e6, x1: 1e6, y1: 1e6 }];
+  const adj = fragmentAdjacency(fr), dist = geoDistance(fr, adj, structureSeeds(fr, adj, 'end'));
+  const jumps = (o, L = LONG_NM) => { let j = 0; for (let k = 1; k < o.seq.length; k++) if (trapGap(fr.t, o.seq[k - 1], o.seq[k]) > L) j++; return j; };
+  const au = figureSequence(fr, ff, fields, [0], { figOrder: 'auto', start: 'tl', dist, adj }), me = figureSequence(fr, ff, fields, [0], { figOrder: 'meander', start: 'tl' });
+  ok(new Set(au.seq).size === fr.n, `by geometry writes all ${fr.n} figures once`);
+  ok(au.followed === 1 && au.inRows === 1, `spiral followed, pad in rows (followed ${au.followed}, rows ${au.inRows})`);
+  ok(jumps(au, 1e4) === 1 && jumps(au) * 5 < jumps(me) && au.travel * 5 < me.travel, `spiral: ${jumps(au)} jumps over 1 µm by geometry (${jumps(au, 1e4)} over 10 µm: spiral → pad) vs ${jumps(me)} in rows (${jumps(me, 1e4)}); travel ${(au.travel / 1e6).toFixed(2)} vs ${(me.travel / 1e6).toFixed(2)} mm`);
+  ok(au.jumps === jumps(au), 'reported jump count matches');
+  const pos = new Float64Array(fr.n); au.seq.forEach((i, k) => { pos[i] = k; }); let back = 0, sp = 0; // along the arm: written in order of distance from the start
+  for (let k = 0; k < fr.n; k++) if (fr.comp[k] === fr.comp[au.seq[0]]) { sp++; for (let e = adj.start[k]; e < adj.start[k + 1]; e++) { const q = adj.nb[e]; if (dist[q] > dist[k] + 10000 && pos[q] < pos[k]) back++; } }
+  ok(back === 0, `spiral: written along the arm, never more than 10 µm ahead of a touching unwritten part (${back} of ${sp})`);
+  console.log(fail ? `${fail} FAILED` : 'ALL PASS (incl. by-geometry order)');
+}

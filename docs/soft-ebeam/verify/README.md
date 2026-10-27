@@ -42,5 +42,7 @@ python -I check_machine.py bragg_figs.json bragg_sites.json round 6
 ```
 
 `run_flow.mjs` drives the Soft-EBeam worker headless with the app's defaults and writes the GDS, the dose table and
-`<out>_figs.json` (every written figure in writing order). `bragg_sites.json` lists the 26 gratings of the test file
+`<out>_figs.json` (every written figure in writing order; `figOrder=meander` for rows instead of the default by-geometry
+order). `node order_jumps.mjs <out>_figs.json` counts the beam moves between figures that do not touch, by length.
+`bragg_sites.json` lists the 26 gratings of the test file
 (the 13 with ΔW = 38…50 nm in 1 nm steps are measured, on layer 1 and layer 31).

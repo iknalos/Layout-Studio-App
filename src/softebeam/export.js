@@ -2,6 +2,8 @@
 //  mode 'datatype' : layer = output layer, DATATYPE = dose class (1…N)          + dose table
 //  mode 'layer'    : LAYER = layerBase + class, DATATYPE 0                        + dose table
 //  mode 'raith'    : DATATYPE = round(1000 × dose factor) (Raith GDS convention, verify on your tool)
+//  two passes      : bulk-pass figures go to layer + bulkOffset (fine pass keeps the layer), written after the fine pass;
+//                    shared-seam figures (in both passes at half dose) use classes N+1…2N = half of classes 1…N
 
 const enc = new TextEncoder();
 class GdsOut {
@@ -34,13 +36,14 @@ function trapPts(t, o, k) {
 
 // job = {frags, fragGroup, groupClass (Uint16 per group), classDose (Float64, index 1…N), fragField?, fields?, order?}
 export function exportGDS(job, opts = {}) {
-  const { libName = 'SOFTEBEAM', top = 'TOP', dbuNm = 1, mode = 'datatype', layerOut = null, layerBase = 100, cellPerField = false } = opts;
-  const { frags, fragGroup, groupClass, classDose } = job, t = frags.t, k = dbuNm;
+  const { libName = 'SOFTEBEAM', top = 'TOP', dbuNm = 1, mode = 'datatype', layerOut = null, layerBase = 100, cellPerField = false, bulkOffset = 100 } = opts;
+  const { frags, fragGroup, groupClass } = job, t = frags.t, k = dbuNm, N = job.classDose ? job.classDose.length - 1 : 0;
+  const classDose = job.share && job.classDose ? Float64Array.from({ length: 2 * N + 1 }, (_, c) => c <= N ? job.classDose[c] : job.classDose[c - N] / 2) : job.classDose;
   const g = new GdsOut();
   g.i16(0x00, 600); g.stamp(0x01); g.str(0x02, libName); g.real8(dbuNm * 1e-3, dbuNm * 1e-9);
   const layerDt = i => {
-    const c = groupClass ? groupClass[fragGroup[i]] : 1, L = layerOut == null ? frags.layer[i] : layerOut;
-    if (mode === 'layer') return [layerBase + c, 0];
+    const c = (groupClass ? groupClass[fragGroup[i]] : 1) + (job.share && job.share[i] ? N : 0), P = job.pass && job.pass[i] ? bulkOffset : 0, L = (layerOut == null ? frags.layer[i] : layerOut) + P;
+    if (mode === 'layer') return [layerBase + P + c, 0];
     if (mode === 'raith') return [L, Math.min(32767, Math.max(0, Math.round(1000 * (classDose ? classDose[c] : 1))))];
     return [L, c];
   };
@@ -71,12 +74,18 @@ function orderByField(job) {
 }
 
 // dose table: one row per class
-export function doseTable(classDose, counts, areas, { baseDose = null, mode = 'datatype', layerBase = 100 } = {}) {
-  const lines = ['# Soft-EBeam dose table', `# relative dose = factor × base dose${baseDose ? ` (${baseDose} µC/cm²)` : ''}`,
-    `# ${mode === 'layer' ? 'layer' : mode === 'raith' ? 'raith_datatype' : 'datatype'}\tclass\tdose_factor${baseDose ? '\tdose_uC_cm2' : ''}\tfigures\tarea_um2`];
+export function doseTable(classDose, counts, areas, { baseDose = null, mode = 'datatype', layerBase = 100, passes = null, shared = false } = {}) {
+  const lines = ['# Soft-EBeam dose table', `# relative dose = factor × base dose${baseDose ? ` (${baseDose} µC/cm²)` : ''}`];
+  if (passes) lines.push('# two passes: pass 1 (fine beam) = source layer(s), written first; pass 2 (bulk beam, high current) = layer + ' + passes.bulkOffset + (mode === 'layer' ? ' (class layers shifted the same way)' : '') + '. Same dose factors in both passes.');
+  lines.push(
+    `# ${mode === 'layer' ? 'layer' : mode === 'raith' ? 'raith_datatype' : 'datatype'}\tclass\tdose_factor${baseDose ? '\tdose_uC_cm2' : ''}\tfigures\tarea_um2`);
   for (let c = 1; c < classDose.length; c++) {
     const key = mode === 'layer' ? layerBase + c : mode === 'raith' ? Math.round(1000 * classDose[c]) : c;
     lines.push([key, c, classDose[c].toFixed(4), ...(baseDose ? [(classDose[c] * baseDose).toFixed(2)] : []), counts ? counts[c] | 0 : '', areas ? (areas[c] / 1e6).toFixed(3) : ''].join('\t'));
+  }
+  if (shared) { // seam figures written in both passes, each at half dose
+    const N = classDose.length - 1; lines.push('# shared seam (fine/bulk boundary, written in both passes at half dose)');
+    for (let c = 1; c <= N; c++) { const key = mode === 'layer' ? layerBase + N + c : mode === 'raith' ? Math.round(500 * classDose[c]) : N + c; lines.push([key, N + c, (classDose[c] / 2).toFixed(4), ...(baseDose ? [(classDose[c] * baseDose / 2).toFixed(2)] : []), '', ''].join('\t')); }
   }
   return lines.join('\n') + '\n';
 }

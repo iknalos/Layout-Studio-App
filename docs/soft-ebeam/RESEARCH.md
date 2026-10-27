@@ -245,6 +245,22 @@ PSF_k = ΔE_k/(E_tot·π(r_k² − r_{k−1}²)). ≥10⁵ electrons for β/η t
 - **Step ripple** ≈ 2·exp(−2π²σ²/s²) per axis: s ≤ spot FWHM is enough.
 - **Fields:** address unit = field/2^bits (20-bit DAC ≈ 1 nm over 1 mm). Meander field order; stitching ~10–15 nm.
 
+### 5.2 Write plans: what the maths says about splitting a pattern
+- **Order does not change the dose.** Absorbed energy is a linear superposition, E = Σ_pieces PSF ⊛ (dose × piece),
+  so the final energy is the same in any writing order; PEC is computed once on the whole pattern.
+- **What matters is where pieces meet.** Two pieces written in different fields (or passes) are offset by Δ with
+  σ_Δ² = 2σ_field² + (v_drift · Δt)². On a feature of width w the damage scales as (Δ/w)²: for a single-mode waveguide
+  the coupling loss is 4.34 (Δ/w₀)² dB (≈ 0.02 dB per stitch at σ = 20 nm, w₀ = 0.4 µm); through an 88 µm pad it is
+  negligible; across 40 nm tips with 80 nm gaps it destroys the junction. Hence: critical spots inside one field and
+  near its centre (deflection distortion grows towards the field edge), cuts through the widest parts, pieces that
+  meet written back to back.
+- **Splitting by feature size saves time.** t = Q / I per pass. For the Y-branch array (0.13 mm² fine, 2.9 mm² bulk at
+  300 µC/cm²): one pass at 1 nA ≈ 2.5 h; fine at 1 nA + bulk at 20 nA + a 5 min current change ≈ 22 min.
+- **The seam between passes.** A misplacement Δ between the passes opens a slit of width Δ; the forward-scatter energy
+  lost at its centre is ≈ erf(Δ / 2α). In a pad edge-equalised to E ≈ 0.7 with η = 0.74, a 47 nm slit drops the
+  energy to ≈ 0.40, below the 0.5 threshold (an unexposed line). Writing the seam band in both passes at half dose
+  loses only half of that, E ≈ 0.60. Measured with the independent checker: 0.57 at 47 nm, 0.49 at 113 nm.
+
 ---
 
 ## 6. Key references

@@ -131,13 +131,14 @@ function ProfilePlot({ prof }) {
 }
 
 // ── layout viewer ─────────────────────────────────────────
-function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onView, cutY, fitTo }) {
+function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onView, cutY, fitTo, beam }) {
   const wrap = useRef(null), cv = useRef(null), [size, setSize] = useState({ w: 600, h: 400 }), [tr, setTr] = useState({ x: 300, y: 200, s: 1 }), drag = useRef(null), [hover, setHover] = useState(null);
   useEffect(() => { const el = wrap.current; const ob = new ResizeObserver(([e]) => setSize({ w: Math.floor(e.contentRect.width), h: Math.floor(e.contentRect.height) })); ob.observe(el); return () => ob.disconnect(); }, []);
   const fit = useCallback(() => { const b = fitTo || bbox; if (!b) return; const W = b.x1 - b.x0 || 1, H = b.y1 - b.y0 || 1, s = Math.min(size.w / W, size.h / H) * 0.88; setTr({ s, x: size.w / 2 - (b.x0 + W / 2) * s, y: size.h / 2 + (b.y0 + H / 2) * s }); }, [bbox, fitTo, size]);
   useEffect(() => { fit(); }, [fitKey, size.w > 0 && size.h > 0]);
   useEffect(() => { onView && onView({ x0: -tr.x / tr.s, x1: (size.w - tr.x) / tr.s, y0: (tr.y - size.h) / tr.s, y1: tr.y / tr.s }); }, [tr, size]);
-  const { rings, traps, pec, fields, sim } = layers;
+  const { rings, traps, pec, fields, sim, analyze } = layers;
+  const anIdx = useMemo(() => { if (!analyze) return null; const L = [[], [], []]; for (let i = 0; i < analyze.frags.n; i++) L[analyze.cls[i]].push(i); return L; }, [analyze]);
   // per-class index lists for batched fills
   const classIdx = useMemo(() => {
     const src = view === 'fields' && fields ? fields : pec; if (!src || !pec) return null;
@@ -226,6 +227,14 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       }
     }
     if (view === 'fractured' && traps) paint(traps.t, [{ col: 'rgb(214,224,247)', ...all(traps.n) }], '#2563eb');
+    if (view === 'analysis' && analyze && anIdx) {
+      paint(analyze.frags.t, AN_COL.map((col, c) => ({ col, n: anIdx[c].length, at: k => anIdx[c][k] })).filter(b => b.n));
+      if (overlays.devices) { const D = analyze.devBox; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeStyle = 'rgba(71,85,105,.8)'; ctx.fillStyle = '#334155'; ctx.font = '11px system-ui';
+        for (let d = 0; d < analyze.nDev; d++) { const x0 = X(D[4 * d]), x1 = X(D[4 * d + 2]), y0 = Y(D[4 * d + 3]), y1 = Y(D[4 * d + 1]); if (x1 < 0 || x0 > size.w || y1 < 0 || y0 > size.h || x1 - x0 < 6) continue; ctx.strokeRect(x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4); if (x1 - x0 > 40) ctx.fillText(`type ${analyze.devType[d] + 1}`, x0, y0 - 5); }
+        ctx.setLineDash([]); }
+      if (overlays.zones) { const Z = analyze.zones; ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 1.6;
+        for (let z = 0; z < analyze.nz; z++) { let x0 = X(Z[4 * z]), x1 = X(Z[4 * z + 2]), y0 = Y(Z[4 * z + 3]), y1 = Y(Z[4 * z + 1]); if (x1 < -8 || x0 > size.w + 8 || y1 < -8 || y0 > size.h + 8) continue; const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; if (x1 - x0 < 9) { x0 = cx - 4.5; x1 = cx + 4.5; } if (y1 - y0 < 9) { y0 = cy - 4.5; y1 = cy + 4.5; } ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); } }
+    }
     if ((view === 'dose' || view === 'fields') && classIdx) {
       const t = classIdx.src.frags.t;
       paint(t, classIdx.L.map((idx, c) => ({ col: classIdx.col[c] || '#999', n: idx.length, at: k => idx[k] })).filter(b => b.n));
@@ -253,6 +262,14 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
         for (let p = 1; p < K; p++) { const a = seq[p - 1], b2 = seq[p]; if (ff[a] !== ff[b2]) { ctx.moveTo(X(cx[a]), Y(cy[a])); ctx.lineTo(X(cx[b2]), Y(cy[b2])); } } ctx.stroke(); ctx.setLineDash([]);
       }
       if (fields.fieldsOn && overlays.order) { const used = new Set(fields.fragField), ord = fields.fieldSeq.filter(f => used.has(f)); ctx.fillStyle = C.beam; ctx.font = 'bold 11px system-ui'; ord.forEach((f, k) => { const F = fields.fields[f]; if ((F.x1 - F.x0) * s > 26) ctx.fillText(`F${k + 1}`, X(F.x0) + 4, Y(F.y1) + 13); }); }
+      if (overlays.steps && beam) { // what the machine does inside each figure: rows of beam steps (raster fill model)
+        let budget = 40000; ctx.fillStyle = 'rgba(17,24,39,.75)';
+        for (let p = 0; p < K && budget > 0; p++) {
+          const i = seq[p], o = i * 6, b = fields.pass && fields.pass[i] ? beam.bssBulk : beam.bss; if (!(b > 0) || b * s < 5 || !visible(t, o)) continue;
+          for (let y = t[o] + b / 2; y < t[o + 1] && budget > 0; y += b) { const f = (y - t[o]) / ((t[o + 1] - t[o]) || 1), xl = t[o + 2] + (t[o + 4] - t[o + 2]) * f, xr = t[o + 3] + (t[o + 5] - t[o + 3]) * f, Yy = Y(y); if (Yy < -2 || Yy > size.h + 2) continue;
+            for (let x = Math.max(xl + b / 2, vx0 - b); x < Math.min(xr, vx1 + b) && budget > 0; x += b) { ctx.fillRect(X(x) - 1, Yy - 1, 2, 2); budget--; } }
+        }
+      }
       const dot = (i, col, r) => { ctx.beginPath(); ctx.arc(X(cx[i]), Y(cy[i]), r, 0, 2 * Math.PI); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); };
       dot(seq[0], '#16a34a', 5); ctx.fillStyle = '#16a34a'; ctx.font = 'bold 11px system-ui'; ctx.fillText('start', X(cx[seq[0]]) + 7, Y(cy[seq[0]]) - 6);
     }
@@ -271,7 +288,7 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
     // scale bar
     const target = 120 / s, p10 = 10 ** Math.floor(Math.log10(target)), nice = [1, 2, 5, 10].map(k => k * p10).filter(v => v <= target).pop() || p10;
     ctx.fillStyle = C.ink; ctx.fillRect(14, size.h - 18, nice * s, 3); ctx.font = '11px system-ui'; ctx.fillText(fmtLen(nice), 14, size.h - 23);
-  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox, orderData, playOn, cutY]);
+  }, [size, tr, view, rings, traps, pec, fields, sim, simImg, classIdx, overlays, simBox, orderData, playOn, cutY, analyze, anIdx, beam]);
 
   // playback overlay: draws only the figures written since the last frame; the beam marker is a DOM element
   const ovRef = useRef(null), ovState = useRef({ key: '', k: 0, pt: null }), markRef = useRef(null);
@@ -335,7 +352,12 @@ function Viewer({ layers, view, overlays, bbox, fitKey, simBox, setSimBox, onVie
       <div style={{ color: C.mute, marginBottom: 3 }}>writing order</div>
       <div style={{ width: 160, height: 10, background: `linear-gradient(90deg, ${[0.06, .3, .5, .7, .94].map(t => rgb(turbo(t))).join(',')})`, borderRadius: 2 }} />
       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>first</span><span>last</span></div>
-      <div style={{ marginTop: 3 }}><span style={{ color: '#16a34a', fontWeight: 700 }}>●</span> start {overlays.path && <><span style={{ marginLeft: 6 }}>─</span> beam path <span style={{ color: C.beam, marginLeft: 6 }}>┅</span> stage move</>}{fields && fields.stitchPts && overlays.stitches && <><span style={{ color: '#ea580c', fontWeight: 700, marginLeft: 6 }}>✕</span> stitch</>}</div>
+      <div style={{ marginTop: 3 }}><span style={{ color: '#16a34a', fontWeight: 700 }}>●</span> start {overlays.path && <><span style={{ marginLeft: 6 }}>─</span> jump to next figure <span style={{ color: C.beam, marginLeft: 6 }}>┅</span> stage move</>}{fields && fields.stitchPts && overlays.stitches && <><span style={{ color: '#ea580c', fontWeight: 700, marginLeft: 6 }}>✕</span> stitch</>}</div>
+      <div style={{ marginTop: 2, color: C.mute, maxWidth: 260 }}>{fields && fields.passes ? 'Pass 1 (fine beam) first, then pass 2 (bulk). ' : ''}The machine fills each figure with its own beam steps{overlays.steps ? ' (zoom in to see them)' : ''}.</div>
+    </div>}
+    {view === 'analysis' && analyze && <div style={{ position: 'absolute', left: 10, bottom: 34, background: 'rgba(255,255,255,.92)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '5px 8px', fontSize: 11 }}>
+      {[['critical (narrow / tight gap)', 0], ['fine pass', 1], ['bulk pass', 2]].map(([l, c]) => <div key={c}><span style={{ display: 'inline-block', width: 10, height: 10, background: AN_COL[c], marginRight: 5, verticalAlign: -1 }} />{l}</div>)}
+      <div style={{ marginTop: 2 }}><span style={{ display: 'inline-block', width: 10, height: 10, border: '1.6px solid #b91c1c', marginRight: 5, verticalAlign: -1 }} />critical spot (never cut by a field edge)</div>
     </div>}
     {(view === 'dose' || view === 'fields') && pec && <div style={{ position: 'absolute', left: 10, bottom: 34, background: 'rgba(255,255,255,.92)', border: `1px solid ${C.line}`, borderRadius: 5, padding: '5px 8px', fontSize: 11 }}>
       <div style={{ color: C.mute, marginBottom: 3 }}>relative dose</div>
@@ -357,15 +379,29 @@ const MODULES = [
   { id: 'extract', icon: '🧩', name: 'Extract', what: 'Pick the layers to expose and, optionally, a region.' },
   { id: 'bias', icon: '↔', name: 'Bias', what: 'Grow or shrink every shape (CD compensation). Applied before healing.' },
   { id: 'fracture', icon: '◩', name: 'Heal & Fracture', what: 'Merge overlapping shapes (union) and cut them into non-overlapping trapezoids.' },
+  { id: 'analyze', icon: '🔍', name: 'Analyze & plan', what: 'Read the structure (repeated devices, narrow features, tight gaps, wide areas), then score every way of writing it with one model and recommend the best three. Fields and passes follow the chosen plan.' },
   { id: 'psf', icon: '⊙', name: 'PSF', what: 'Point-spread function: how energy spreads around the beam. From literature presets, your own α/β/η, a Monte Carlo run, or an imported file.', side: true },
   { id: 'pec', icon: '⚖', name: 'PEC', what: 'Proximity effect correction: split figures near edges and assign each piece a dose so that every edge receives the same energy.' },
   { id: 'fields', icon: '▦', name: 'Fields & Order', what: 'Split figures at write-field boundaries and choose the writing order: how the stage visits the fields, and in which order the beam writes the figures inside each field.' },
   { id: 'sim', icon: '◍', name: 'Simulate', what: 'Expose the corrected pattern with the PSF and show the developed edge (threshold model).', side: true },
   { id: 'export', icon: '📤', name: 'Export', what: 'Write GDSII with dose classes, a dose table, and estimate dwell and write time.' },
 ];
-const STAGES = ['import', 'fracture', 'pec', 'fields'];
+const STAGES = ['import', 'fracture', 'analyze', 'pec', 'fields'];
 const FIG_ORDERS = [['shapes', 'Shape by shape (follow geometry)'], ['raster', 'Raster rows (like reading)'], ['meander', 'Meander rows (serpentine)'], ['nearest', 'Shortest path (fewest long jumps)'], ['centerOut', 'Centre outwards'], ['outsideIn', 'Outside inwards'], ['dose', 'By dose (low → high)']];
-const stageOf = id => ({ import: 'import', extract: 'import', bias: 'import', fracture: 'fracture', psf: 'pec', pec: 'pec', fields: 'fields', sim: 'pec', export: 'pec' })[id];
+const stageOf = id => ({ import: 'import', extract: 'import', bias: 'import', fracture: 'fracture', analyze: 'analyze', psf: 'pec', pec: 'pec', fields: 'fields', sim: 'pec', export: 'pec' })[id];
+const AN_COL = ['#dc2626', '#f59e0b', '#93c5fd'];
+const PLACE_LABEL = { adaptive: 'whole devices / adaptive', grid: 'fixed grid' };
+const planKey = p => p ? `${p.size}|${p.placement}|${p.passes}|${(p.methods || []).join(',')}` : '';
+// three genuinely different ways: the best plan, the best with the other pass strategy, the best at another field size
+function pickWays(plans) {
+  if (!plans) return []; const ok = plans.filter(p => p.feasible), best = ok[0]; if (!best) return [];
+  const out = [best], add = p => { if (p && !out.some(q => q.size === p.size && q.placement === p.placement && q.passes === p.passes)) out.push(p); };
+  const ad = ok.filter(p => p.placement === 'adaptive');
+  add(ad.find(p => p.passes !== best.passes)); add(ad.find(p => p.size !== best.size));
+  for (const p of ok) { if (out.length >= 3) break; add(p); }
+  return out.slice(0, 3).sort((a, b) => a.score - b.score);
+}
+const parseSizes = s => [...new Set(String(s).split(/[\s,;]+/).map(Number).filter(v => v > 0 && v < 1e5))].sort((a, b) => a - b);
 
 const DEFAULTS = {
   top: '', layers: null, region: 'all', win: { x0: 0, y0: 0, x1: 10000, y1: 10000 }, maxPolys: 400000,
@@ -375,14 +411,16 @@ const DEFAULTS = {
   mc: { resist: 'PMMA', resistT: 200, inter: [], substrate: 'Si', kV: 100, electrons: 100000, beamFWHM: 2 },
   fragAuto: true, fragMax: 1000, edgeW: 60, smallSize: 400,
   pecOn: true, mix: 1, tol: 0.01, maxIter: 60, classMode: 'accuracy', acc: 0.01, nClasses: 64, maxClasses: 256,
-  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes', placement: 'auto',
+  fieldsOn: true, fieldUm: 100, origin: 'bbox', traversal: 'meanderX', start: 'tl', figOrder: 'shapes', placement: 'plan', mergeFigs: true,
+  anCrit: 150, anKeep: 1000, anFine: 3000, anSleeve: 500, mSizes: '100, 200, 500, 1000', dacBits: 20, priority: 'balanced', planPick: 0,
+  passMode: 'plan', iBulk: 20, bssBulk: 40, tSwitch: 5, tField: 1, bulkOffset: 100,
   simPitch: 0, simThr: 0.5, simCompare: true,
   expMode: 'datatype', layerKeep: true, layerOut: 1, layerBase: 100, cellPerField: false, baseDose: 300, current: 1, bss: 10, minDwell: 20, fileName: 'softebeam',
 };
 
 export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) {
   const call = useEngine();
-  const saved = useMemo(() => lsGet(), []);
+  const saved = useMemo(() => { const s = lsGet(); if (s && s.anCrit == null) s.placement = 'plan'; return s; }, []); // flows saved before Analyze existed
   const [P, setP] = useState(() => ({ ...DEFAULTS, ...(saved || {}), mc: { ...DEFAULTS.mc, ...((saved && saved.mc) || {}) }, manual: { ...DEFAULTS.manual, ...((saved && saved.manual) || {}) }, top: '', layers: null }));
   const [sel, setSel] = useState('import');
   const [meta, setMeta] = useState(null); // {tops, layers, cells, name}
@@ -395,7 +433,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   const [status, setStatus] = useState('Open a GDS/OASIS file or send a layout from the editor.');
   const [err, setErr] = useState({});
   const [view, setView] = useState('layout');
-  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true, stitches: true });
+  const [overlays, setOverlays] = useState({ outlines: false, ctrl: false, order: true, path: true, stitches: true, zones: true, devices: true, steps: true });
+  const [plans, setPlansS] = useState(null), plansRef = useRef(null), [showAllPlans, setShowAllPlans] = useState(false);
+  const setPlans = v => { plansRef.current = v; setPlansS(v); };
   const [simBox, setSimBox] = useState(null);
   const [viewWin, setViewWin] = useState(null);
   const [cutFrac, setCutFrac] = useState(0.5);
@@ -410,7 +450,8 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   // invalidate downstream stages when parameters change
   const invalidate = useCallback(from => {
     const i = STAGES.indexOf(from); if (i < 0) return; const d = { ...doneRef.current }; STAGES.slice(i).forEach(s => { d[s] = false; }); setDone(d);
-    setRes(r => { const n = { ...r }; if (i <= 1) delete n.fracture; if (i <= 2) { delete n.pec; delete n.sim; } if (i <= 3) delete n.fields; if (i === 0) delete n.import; return n; });
+    setRes(r => { const n = { ...r }; if (i <= 1) delete n.fracture; if (i <= 2) delete n.analyze; if (i <= 3) { delete n.pec; delete n.sim; } if (i <= 4) delete n.fields; if (i === 0) delete n.import; return n; });
+    if (i <= 2) setPlans(null);
   }, []);
   const set = (stage, k, v) => { up(k, v); invalidate(stage); };
 
@@ -431,14 +472,31 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     if (fwd.terms.length) { let lo = 0.01, hi = 0.1 * sMax; for (let k = 0; k < 60; k++) { const m = Math.sqrt(lo * hi); psfEnclosed(fwd, m) < 1 - 1 / Math.E ? (lo = m) : (hi = m); } aEff = hi; }
     return { eta: Wb / Math.max(1e-12, W - Wb), beta: sMax, r50, aEff, nTerms: psfActive.terms.length };
   }, [psfActive]);
-  useEffect(() => { invalidate('pec'); }, [psfActive]);
+  useEffect(() => { invalidate('analyze'); }, [psfActive]); // fragment sizes follow the PSF
 
   // automatic fragmentation sizes from the PSF (edge strip ≈ 3·α_eff, interior ≈ β/10)
   const frag = useMemo(() => {
-    if (!P.fragAuto || !psfSummary) return { fragMax: P.fragMax, edgeW: P.edgeW, smallSize: P.smallSize };
+    if (!P.fragAuto || !psfSummary) return { fragMax: P.fragMax, edgeW: P.edgeW, smallSize: P.smallSize, sleeve: +P.anSleeve };
     const edgeW = Math.round(Math.min(250, Math.max(20, 3 * psfSummary.aEff))), fragMax = Math.round(Math.min(5000, Math.max(4 * edgeW, psfSummary.beta / 10)));
-    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW) };
-  }, [P.fragAuto, P.fragMax, P.edgeW, P.smallSize, psfSummary]);
+    return { fragMax, edgeW, smallSize: Math.max(300, 4 * edgeW), sleeve: +P.anSleeve }; // sleeve: PEC pieces also end where the bulk pass begins
+  }, [P.fragAuto, P.fragMax, P.edgeW, P.smallSize, P.anSleeve, psfSummary]);
+
+  // ── write plans ────────────────────────────────────────
+  const sizes = useMemo(() => parseSizes(P.mSizes), [P.mSizes]);
+  const machine = useMemo(() => ({ dacBits: +P.dacBits, iFine: +P.current, bssFine: +P.bss, iBulk: +P.iBulk, bssBulk: +P.bssBulk, minDwell: +P.minDwell, tSwitch: 60 * +P.tSwitch, tField: +P.tField, baseDose: +P.baseDose }), [P.dacBits, P.current, P.bss, P.iBulk, P.bssBulk, P.minDwell, P.tSwitch, P.tField, P.baseDose]);
+  const rankKey = useRef('');
+  useEffect(() => { // new machine settings / priority / sizes: re-rank without repeating the analysis
+    if (!res.analyze || running) return; const k = JSON.stringify([sizes, machine, P.priority]); if (k === rankKey.current) return;
+    const h = setTimeout(() => { rankKey.current = k; call('plans', { sizes, machine, priority: P.priority }, m => setProg({ label: m.label, p: null })).then(r => { setPlans(r.plans); setProg(null); }).catch(e => setStatus('⚠ Plans: ' + e.message)); }, 300);
+    return () => clearTimeout(h);
+  }, [res.analyze, sizes, machine, P.priority, running]);
+  const ways = useMemo(() => pickWays(plans), [plans]);
+  const chosen = ways.length ? ways[Math.min(P.planPick || 0, ways.length - 1)] : null;
+  const chosenNow = () => { const w = pickWays(plansRef.current); return w.length ? w[Math.min(P.planPick || 0, w.length - 1)] : null; };
+  const usePasses = P.passMode === 'split' || (P.passMode === 'plan' && !!chosen && chosen.passes === 'split');
+  const fieldKey = `${P.placement === 'plan' ? planKey(chosen) : ''}|${usePasses}`;
+  useEffect(() => { if (doneRef.current.fields) invalidate('fields'); }, [fieldKey]);
+  const baseline = useMemo(() => plans && chosen ? plans.find(p => p.placement === 'grid' && p.size === chosen.size && p.passes === chosen.passes) : null, [plans, chosen]);
 
   // ── loading a layout ───────────────────────────────────
   const [autoImport, setAutoImport] = useState(0);
@@ -475,16 +533,23 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       } else if (st === 'fracture') {
         const r = await call('fracture', { mode: P.fracMode, rectStep: P.rectStep });
         setRes(x => ({ import: x.import, fracture: r })); setView('fractured'); setStatus(`${fmtN(r.n)} trapezoids in ${fmtN(r.nComp)} connected shapes.`);
+      } else if (st === 'analyze') {
+        const r = await call('analyze', { frag, crit: +P.anCrit, keep: +P.anKeep, fine: +P.anFine, sleeve: +P.anSleeve, sizes, machine, priority: P.priority }, m => setProg({ label: m.label, p: null }));
+        rankKey.current = JSON.stringify([sizes, machine, P.priority]); setPlans(r.plans);
+        setRes(x => ({ import: x.import, fracture: x.fracture, analyze: r })); setView('analysis');
+        const w = pickWays(r.plans)[0];
+        setStatus(`${fmtN(r.nDev)} devices (${r.types.length} unique), ${r.nz} critical spots.${w ? ` Recommended: ${w.size / 1000} µm fields, ${w.passes === 'split' ? 'fine + bulk passes' : 'one pass'}, ${Math.round(w.stitches)} stitches, ${fmtTime(w.time)}.` : ''}`);
       } else if (st === 'pec') {
         if (!psfActive) throw new Error('define a PSF first');
         const r = await call('pec', { frag, psf: psfActive, pec: { enabled: P.pecOn, mix: P.mix, tol: P.tol, maxIter: P.maxIter }, classes: { mode: P.classMode, acc: P.acc, n: P.nClasses, max: P.maxClasses } },
           m => setProg(m.stage === 'iterate' ? { label: `PEC iteration ${m.iter + 1} · max error ${(m.maxErr * 100).toFixed(2)} %`, p: null } : { label: 'PEC: short-range matrix', p: m.p }));
-        setRes(x => ({ import: x.import, fracture: x.fracture, pec: r })); setView('dose');
+        setRes(x => ({ import: x.import, fracture: x.fracture, analyze: x.analyze, pec: { ...r, frags: r.frags || (x.analyze && x.analyze.frags) } })); setView('dose');
         setStatus(r.corrected ? `PEC: ${fmtN(r.nFrags)} figures, ${fmtN(r.nGroups)} dose groups, ${r.nClasses} classes; converged to ${pct(r.maxErr)} in ${r.iters} iterations.` : `Dose 1.0 assigned to ${fmtN(r.nFrags)} figures (PEC off).`);
       } else if (st === 'fields') {
-        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement }, m => setProg({ label: m.label, p: null }));
+        const plan = P.placement === 'plan' ? chosenNow() : null, ps = P.passMode === 'split' || (P.passMode === 'plan' && !!plan && plan.passes === 'split');
+        const r = await call('fields', { fieldsOn: P.fieldsOn, size: P.fieldUm * 1000, originMode: P.origin, traversal: P.traversal, start: P.start, figOrder: P.figOrder, placement: P.placement, plan: plan && { size: plan.size, placement: plan.placement, methods: plan.methods, passes: plan.passes }, passes: ps, merge: P.mergeFigs }, m => setProg({ label: m.label, p: null }));
         setRes(x => ({ ...x, fields: r })); setView('order');
-        setStatus(`${P.fieldsOn ? `${r.placementUsed}: ${r.nFields} fields of ${P.fieldUm} µm, ${r.stitches} stitches, ` : ''}${fmtN(r.n)} figures. Press ▶ in the viewer to watch the writing order.`);
+        setStatus(`${P.fieldsOn ? `${r.placementUsed}: ${r.nFields} fields of ${r.size / 1000} µm, ${r.stitches} stitches (${r.critCut} through critical spots), ` : ''}${fmtN(r.n)} figures${r.nBefore > r.n ? ` (merged from ${fmtN(r.nBefore)})` : ''}${r.passes ? ', fine pass first' : ''}. Press ▶ in the viewer to watch the writing order.`);
       }
       setDone({ ...doneRef.current, [st]: true });
       setStatus(s => `${s}  (${((performance.now() - t0) / 1000).toFixed(2)} s)`);
@@ -517,7 +582,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
     if (!(await runTo('fields'))) return;
     setRunning('export');
     try {
-      const r = await call('export', { opts: { mode: P.expMode, layerOut: P.layerKeep ? null : +P.layerOut, layerBase: +P.layerBase, cellPerField: P.fieldsOn && P.cellPerField, useFields: P.fieldsOn, dbuNm: 1, libName: 'SOFTEBEAM', top: (P.top || 'TOP').slice(0, 32) }, baseDose: +P.baseDose || null });
+      const r = await call('export', { opts: { mode: P.expMode, layerOut: P.layerKeep ? null : +P.layerOut, layerBase: +P.layerBase, cellPerField: P.fieldsOn && P.cellPerField, useFields: P.fieldsOn, dbuNm: 1, libName: 'SOFTEBEAM', top: (P.top || 'TOP').slice(0, 32), bulkOffset: +P.bulkOffset }, baseDose: +P.baseDose || null });
       download(r.bytes, `${P.fileName || 'softebeam'}.gds`); download(r.table, `${P.fileName || 'softebeam'}_dose_table.txt`, 'text/plain');
       setStatus(`Exported ${P.fileName}.gds (${(r.bytes.length / 1024).toFixed(0)} kB) and the dose table.`);
     } catch (e) { setStatus('⚠ Export: ' + e.message); }
@@ -564,6 +629,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'import': case 'extract': return !meta ? 'unset' : done.import ? 'done' : 'ready';
       case 'bias': return !P.biasOn ? 'off' : done.import ? 'done' : 'ready';
       case 'fracture': return !meta ? 'unset' : done.fracture ? 'done' : 'ready';
+      case 'analyze': return !meta ? 'unset' : done.analyze ? 'done' : 'ready';
       case 'psf': return psfActive ? 'done' : 'unset';
       case 'pec': return !psfActive ? 'unset' : done.pec ? 'done' : 'ready';
       case 'fields': return done.fields ? 'done' : 'ready';
@@ -578,9 +644,10 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       case 'extract': return meta ? `${P.layers ? `L${P.layers.join(',L')}` : 'all layers'} · ${P.region === 'all' ? 'full extent' : 'region'}${r.import ? ` · ${fmtN(r.import.nRings)} shapes` : ''}` : '';
       case 'bias': return P.biasOn ? `${P.bias > 0 ? '+' : ''}${P.bias} nm` : 'off';
       case 'fracture': return r.fracture ? `${fmtN(r.fracture.n)} trapezoids` : P.fracMode === 'rect' ? 'rectangles' : 'trapezoids';
+      case 'analyze': return r.analyze ? `${fmtN(r.analyze.nDev)} devices · ${r.analyze.nz} critical${chosen ? ` · plan ${Math.min(P.planPick, ways.length - 1) + 1}: ${chosen.size / 1000} µm${chosen.passes === 'split' ? ', 2 passes' : ''}` : ''}` : 'devices, critical spots, write plans';
       case 'psf': return psfSummary ? `${P.psfMode === 'preset' ? (PSF_PRESETS.find(x => x.id === P.presetId) || {}).label : P.psfMode === 'manual' ? 'manual α/β/η' : (psfData && psfData.label) || ''}` : 'not defined';
       case 'pec': return r.pec ? (r.pec.corrected ? `${r.pec.nClasses} classes · ×${r.pec.classDose[1].toFixed(2)}–×${r.pec.classDose[r.pec.nClasses].toFixed(2)}` : 'uniform dose') : P.pecOn ? `edge eq. ${Math.round(P.mix * 100)}% · ${P.classMode === 'accuracy' ? `${(P.acc * 100).toFixed(1)}% steps` : `${P.nClasses} classes`}` : 'off (dose 1.0)';
-      case 'fields': return `${P.fieldsOn ? (r.fields ? `${r.fields.nFields} × ${P.fieldUm} µm · ${r.fields.stitches} stitches` : `${P.fieldUm} µm · ${P.placement === 'auto' ? 'auto placement' : 'fields'}`) : 'no field split'} · ${(FIG_ORDERS.find(o => o[0] === P.figOrder) || [, ''])[1].split(' (')[0].toLowerCase()}`;
+      case 'fields': return `${P.fieldsOn ? (r.fields ? `${r.fields.nFields} × ${r.fields.size / 1000} µm · ${r.fields.stitches} stitches` : P.placement === 'plan' ? (chosen ? `write plan · ${chosen.size / 1000} µm` : 'write plan') : `${P.fieldUm} µm · ${P.placement === 'auto' ? 'auto placement' : 'fields'}`) : 'no field split'} · ${(FIG_ORDERS.find(o => o[0] === P.figOrder) || [, ''])[1].split(' (')[0].toLowerCase()}`;
       case 'sim': return r.sim ? `${r.sim.nx}×${r.sim.ny} px` : 'threshold model';
       case 'export': return { datatype: 'GDS · datatype = class', layer: 'GDS · layer per class', raith: 'GDS · Raith (DT = 1000·DF)' }[P.expMode];
       default: return '';
@@ -590,10 +657,14 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   // ── inspector panels ───────────────────────────────────
   const pecR = res.pec;
   const writeEst = useMemo(() => {
-    if (!pecR) return null; let Q = 0, A = 0, tmin = Infinity, tmax = 0;
-    for (let c = 1; c < pecR.classDose.length; c++) { const a = pecR.areas[c] * 1e-14, d = pecR.classDose[c] * P.baseDose; Q += a * d; A += a; if (pecR.areas[c] > 0) { const dw = 0.01 * d * P.bss * P.bss / P.current; tmin = Math.min(tmin, dw); tmax = Math.max(tmax, dw); } }
-    return { A, Q, t: Q * 1e-6 / (P.current * 1e-9), tmin, tmax };
-  }, [pecR, P.baseDose, P.bss, P.current]);
+    if (!pecR) return null;
+    const pass = (areas, I, bss) => { let Q = 0, A = 0, tmin = Infinity, tmax = 0, t = 0; // beam time with the dwell floored at the machine minimum
+      for (let c = 1; c < pecR.classDose.length; c++) { if (!(areas[c] > 0)) continue; const a = areas[c] * 1e-14, d = pecR.classDose[c] * P.baseDose, dw = 0.01 * d * bss * bss / I; Q += a * d; A += a; tmin = Math.min(tmin, dw); tmax = Math.max(tmax, dw); t += areas[c] / (bss * bss) * Math.max(dw, P.minDwell) * 1e-9; }
+      return { A, Q, t, tmin, tmax }; };
+    const one = pass(pecR.areas, P.current, P.bss);
+    if (usePasses && pecR.areasPass) { const f = pass(pecR.areasPass[0], P.current, P.bss), b = pass(pecR.areasPass[1], P.iBulk, P.bssBulk); return { ...one, t: one.t, passes: true, f, b, single: one.t, total: f.t + b.t + 60 * P.tSwitch, tmin: Math.min(f.tmin, b.tmin), tmax: Math.max(f.tmax, b.tmax) }; }
+    return one;
+  }, [pecR, P.baseDose, P.bss, P.current, P.iBulk, P.bssBulk, P.tSwitch, P.minDwell, usePasses]);
   const layerList = meta ? meta.layers : [];
   // cross-section through the simulation: energy profiles + drawn vs developed widths
   const profile = useMemo(() => {
@@ -643,6 +714,53 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         {res.fracture && <Sec title="Result"><KV k="Trapezoids" v={fmtN(res.fracture.n)} /><KV k="Connected shapes" v={fmtN(res.fracture.nComp)} /><KV k="Exposed area" v={`${(res.fracture.area / 1e6).toFixed(2)} µm²`} /></Sec>}
         <Note>Overlaps are merged with a positive-winding union, then each shape is cut along horizontal lines at its vertices; collinear neighbours are re-merged.</Note>
       </>;
+      case 'analyze': { const A = res.analyze, pick = Math.min(P.planPick || 0, Math.max(0, ways.length - 1)), tot = A ? A.areas[0] + A.areas[1] + A.areas[2] : 0;
+        return <>
+        {A ? <>
+          <Sec title="What is in the layout">
+            <KV k="Devices (shapes that belong together)" v={fmtN(A.nDev)} />
+            <KV k="Unique devices" v={`${fmtN(A.types.length)}${A.types.length < A.nDev ? ' (repeats solved once)' : ''}`} />
+            {A.types.slice().sort((a, b) => b.n - a.n).slice(0, 3).map((t, k) => <KV key={k} k={`· ${fmtN(t.n)} ×`} v={`${fmtLen(t.w)} × ${fmtLen(t.h)}${t.zones ? ` · ${t.zones} critical` : ''}`} />)}
+            <KV k="Critical spots" v={fmtN(A.nz)} tone={A.nz ? C.bad : C.ok} />
+            {isFinite(A.minWidth) && <KV k="Narrowest feature" v={fmtLen(A.minWidth)} />}
+            {isFinite(A.minGap) && <KV k="Tightest gap between shapes" v={fmtLen(A.minGap)} />}
+            <KV k="Largest device" v={fmtLen(A.maxDev)} />
+            {A.slivers > 0 && <KV k="Drawing slivers ignored" v={A.slivers} />}
+            <div style={{ display: 'flex', height: 10, borderRadius: 3, overflow: 'hidden', margin: '6px 0 3px', border: `1px solid ${C.line}` }}>{A.areas.map((a, c) => <div key={c} title={`${(a / 1e6).toFixed(1)} µm²`} style={{ width: `${100 * a / (tot || 1)}%`, background: AN_COL[c] }} />)}</div>
+            <div style={{ fontSize: 10.5, color: C.mute }}>{['critical', 'fine pass', 'bulk pass'].map((l, c) => <span key={c} style={{ marginRight: 8 }}><span style={{ color: AN_COL[c] }}>■</span> {l} {A.areas[c] >= 1e6 ? `${(A.areas[c] / 1e6).toFixed(A.areas[c] < 1e8 ? 1 : 0)} µm²` : `${(A.areas[c] / 1e6).toFixed(3)} µm²`}</span>)}</div>
+            <div style={{ display: 'flex', gap: 10 }}><Chk label="critical spots" checked={overlays.zones} onChange={v => setOverlays(o => ({ ...o, zones: v }))} /><Chk label="devices" checked={overlays.devices} onChange={v => setOverlays(o => ({ ...o, devices: v }))} /></div>
+            {A.zlist.length > 0 && <div style={{ fontSize: 11, margin: '4px 0' }}>{A.zlist.slice(0, 6).map(z => <div key={z.z} style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}><span style={{ color: C.mute }}>{z.kind & 1 ? `${fmtLen(z.minW)} wide` : ''}{z.kind === 3 ? ' · ' : ''}{z.kind & 2 ? `${fmtLen(z.minG)} gap` : ''}</span><button onClick={() => { const m = Math.max(z.x1 - z.x0, z.y1 - z.y0, 500); setView('analysis'); setFitTo({ x0: z.x0 - m, y0: z.y0 - m, x1: z.x1 + m, y1: z.y1 + m }); setFitKey(k => k + 1); }} style={{ ...inp, padding: '0 6px', cursor: 'pointer', fontSize: 10.5 }}>⌖ show</button></div>)}{A.nz > 6 && <div style={{ color: C.mute }}>… {fmtN(A.nz - 6)} more</div>}</div>}
+          </Sec>
+          <Sec title="Ways to write">
+            <Sel label="Priority" value={P.priority} onChange={v => up('priority', v)} options={[['quality', 'Quality first'], ['balanced', 'Balanced'], ['speed', 'Speed first']]} />
+            {ways.map((p, k) => { const on = k === pick; return <div key={planKey(p)} onClick={() => up('planPick', k)} style={{ border: `1px solid ${on ? C.accent : C.line}`, background: on ? '#f5f7ff' : '#fff', borderRadius: 6, padding: '6px 8px', margin: '6px 0', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ width: 18, height: 18, borderRadius: 9, background: k === 0 ? C.ok : '#94a3b8', color: '#fff', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{k + 1}</span>
+                <b style={{ fontSize: 12 }}>{p.size / 1000} µm fields · {p.passes === 'split' ? 'fine + bulk' : 'one pass'}</b>{k === 0 && <span style={{ fontSize: 10, color: C.ok, fontWeight: 700 }}>RECOMMENDED</span>}</div>
+              <div style={{ display: 'flex', gap: 10, fontSize: 11, color: C.mute, margin: '3px 0 0 24px', flexWrap: 'wrap' }}><span>{fmtN(Math.round(p.stitches))} stitches</span><span style={{ color: p.crit ? C.bad : C.ok }}>{fmtN(Math.round(p.crit))} critical</span><span>{fmtN(Math.round(p.fields))} fields</span><span>{fmtTime(p.time)}</span></div>
+              {on && <ul style={{ margin: '5px 0 0 6px', paddingLeft: 18, fontSize: 11.5, lineHeight: 1.45 }}>{p.why.map((w, i) => <li key={i}>{w}</li>)}</ul>}
+            </div>; })}
+            {baseline && <div style={{ fontSize: 11, color: C.mute, margin: '4px 0' }}>For comparison, BEAMER-style fixed {baseline.size / 1000} µm grid: {fmtN(Math.round(baseline.stitches))} stitches, {fmtN(Math.round(baseline.crit))} through critical spots, risk {baseline.risk.toFixed(1)}{baseline.sampled ? ' (estimated)' : ''}.</div>}
+            <Btn small onClick={() => setShowAllPlans(v => !v)}>{showAllPlans ? 'Hide' : 'Show'} all {plans ? plans.length : 0} plans</Btn>
+            {showAllPlans && plans && <table style={{ width: '100%', fontSize: 10.5, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left' }}>#</th><th style={{ textAlign: 'left' }}>plan</th><th>stitch</th><th>crit</th><th>time</th><th>score</th></tr></thead>
+              <tbody>{plans.map(p => <tr key={planKey(p) + p.rank} style={{ textAlign: 'right', color: p.feasible ? C.ink : '#b8bec8' }}><td style={{ textAlign: 'left' }}>{p.rank}</td><td style={{ textAlign: 'left' }}>{p.size / 1000} µm · {PLACE_LABEL[p.placement]} · {p.passes === 'split' ? '2 passes' : '1 pass'}</td><td>{fmtN(Math.round(p.stitches))}</td><td>{fmtN(Math.round(p.crit))}</td><td>{fmtTime(p.time)}</td><td>{isFinite(p.score) ? p.score.toFixed(2) : 'n/a'}</td></tr>)}</tbody></table>}
+          </Sec>
+        </> : <Note>Runs after Heal & Fracture. Finds repeated devices, narrow features and tight gaps (critical spots that a field edge must never cut), and which parts need the fine beam. Then it scores every field size × placement × pass combination and recommends three.</Note>}
+        <Sec title="Machine">
+          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, margin: '5px 0' }}><span style={{ color: C.mute }}>Field sizes offered</span><input value={P.mSizes} onChange={e => up('mSizes', e.target.value)} style={{ ...inp, width: 130 }} title="µm, comma separated" /></label>
+          <Num label="Deflection DAC" unit="bits" value={P.dacBits} onChange={v => up('dacBits', v)} hint="Address grid = field / 2^bits; it must not be coarser than the fine beam step" />
+          <Num label="Fine beam" unit="nA" value={P.current} onChange={v => up('current', v)} /><Num label="Fine beam step" unit="nm" value={P.bss} onChange={v => up('bss', v)} />
+          <Num label="Bulk beam" unit="nA" value={P.iBulk} onChange={v => up('iBulk', v)} /><Num label="Bulk beam step" unit="nm" value={P.bssBulk} onChange={v => up('bssBulk', v)} />
+          <Num label="Current change" unit="min" value={P.tSwitch} onChange={v => up('tSwitch', v)} /><Num label="Per field (stage + settle)" unit="s" value={P.tField} onChange={v => up('tField', v)} />
+          <Num label="Base dose" unit="µC/cm²" value={P.baseDose} onChange={v => up('baseDose', v)} />
+        </Sec>
+        <Sec title="Thresholds">
+          <Num label="Critical below" unit="nm" value={P.anCrit} onChange={v => set('analyze', 'anCrit', v)} hint="Features or gaps narrower than this are critical: about 5 × the field-to-field placement error" />
+          <Num label="Same device within" unit="nm" value={P.anKeep} onChange={v => set('analyze', 'anKeep', v)} hint="Shapes closer than this must stay aligned to each other, so they are kept in one field when they fit" />
+          <Num label="Fine pass below" unit="nm" value={P.anFine} onChange={v => set('analyze', 'anFine', v)} hint="Narrower parts are written with the fine beam" />
+          <Num label="Outline sleeve" unit="nm" value={P.anSleeve} onChange={v => set('analyze', 'anSleeve', v)} hint="Band along every outline written with the fine beam, so edges stay sharp when the inside uses the bulk beam" />
+        </Sec>
+        <Note>Score = 100 × critical spots cut + Σ stitch weights (1 per stitch through a feature ≤ 1 µm wide, (1 µm / width)² above) + 0.2 × cut length in mm + write time in hours × priority (quality ¼, balanced 1, speed 4).</Note>
+      </>; }
       case 'psf': return <>
         <Sel label="Source" value={P.psfMode} onChange={v => up('psfMode', v)} options={[['preset', 'Literature preset'], ['manual', 'α / β / η (manual)'], ['mc', 'Monte Carlo (this PC)'], ['file', 'Import file (.lpsf / text)']]} />
         {P.psfMode === 'preset' && <><Sel label="Preset" value={P.presetId} onChange={v => up('presetId', v)} options={PSF_PRESETS.map(p => [p.id, p.label])} w={190} />
@@ -700,9 +818,9 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           </Sec>
         </>}
         <Sec title="PEC fracturing">
-          <Chk label="Automatic from PSF" checked={P.fragAuto} onChange={v => set('pec', 'fragAuto', v)} />
+          <Chk label="Automatic from PSF" checked={P.fragAuto} onChange={v => set('analyze', 'fragAuto', v)} />
           {P.fragAuto ? <><KV k="Edge strip" v={fmtLen(frag.edgeW)} /><KV k="Interior pieces ≤" v={fmtLen(frag.fragMax)} /><KV k="Keep shapes whole ≤" v={fmtLen(frag.smallSize)} /></> : <>
-            <Num label="Edge strip" unit="nm" value={P.edgeW} onChange={v => set('pec', 'edgeW', v)} /><Num label="Interior pieces ≤" unit="nm" value={P.fragMax} onChange={v => set('pec', 'fragMax', v)} /><Num label="Keep shapes whole ≤" unit="nm" value={P.smallSize} onChange={v => set('pec', 'smallSize', v)} /></>}
+            <Num label="Edge strip" unit="nm" value={P.edgeW} onChange={v => set('analyze', 'edgeW', v)} /><Num label="Interior pieces ≤" unit="nm" value={P.fragMax} onChange={v => set('analyze', 'fragMax', v)} /><Num label="Keep shapes whole ≤" unit="nm" value={P.smallSize} onChange={v => set('analyze', 'smallSize', v)} /></>}
         </Sec>
         {pecR && <Sec title="Result">
           <KV k="Figures / dose groups" v={`${fmtN(pecR.nFrags)} / ${fmtN(pecR.nGroups)}`} />
@@ -716,21 +834,22 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
       </>;
       case 'fields': return <>
         <Chk label="Split into write fields" checked={P.fieldsOn} onChange={v => set('fields', 'fieldsOn', v)} />
-        {P.fieldsOn && <><Num label="Field size" unit="µm" value={P.fieldUm} onChange={v => set('fields', 'fieldUm', v)} />
-          <Sel label="Field placement" value={P.placement} onChange={v => set('fields', 'placement', v)} w={190} options={[['auto', 'Automatic (best of all)'], ['followEnd', 'Follow geometry, from one end'], ['followCenter', 'Follow geometry, centre first'], ['gridOpt', 'Fixed grid, optimised offset'], ['grid', 'Fixed grid']]} />
+        {P.fieldsOn && <><Sel label="Field placement" value={P.placement} onChange={v => set('fields', 'placement', v)} w={190} options={[['plan', 'From the write plan (recommended)'], ['auto', 'Best of all at this field size'], ['devices', 'Adaptive per device'], ['followEnd', 'Follow geometry, from one end'], ['followCenter', 'Follow geometry, centre first'], ['gridOpt', 'Fixed grid, optimised offset'], ['grid', 'Fixed grid']]} />
+          {P.placement === 'plan' ? <KV k="Field size (from the plan)" v={chosen ? `${chosen.size / 1000} µm` : 'run Analyze'} /> : <Num label="Field size" unit="µm" value={P.fieldUm} onChange={v => set('fields', 'fieldUm', v)} />}
           {P.placement === 'grid' && <Sel label="Grid origin" value={P.origin} onChange={v => set('fields', 'origin', v)} options={[['bbox', 'Start at pattern corner'], ['center', 'Centred on pattern'], ['origin', 'Grid through (0,0)']]} />}</>}
         <Sec title="Writing order">
           <Sel label="Start corner" value={P.start} onChange={v => set('fields', 'start', v)} options={[['tl', 'Top-left (top → bottom)'], ['bl', 'Bottom-left (bottom → top)'], ['tr', 'Top-right'], ['br', 'Bottom-right']]} w={180} />
           {P.fieldsOn && (P.placement === 'grid' || P.placement === 'gridOpt') && <Sel label="Field traversal" value={P.traversal} onChange={v => set('fields', 'traversal', v)} options={[['meanderX', 'Meander rows (serpentine)'], ['rasterX', 'Raster rows (same direction)'], ['meanderY', 'Meander columns'], ['rasterY', 'Raster columns'], ['spiral', 'Spiral from the centre']]} w={180} />}
           <Sel label="Figures in a field" value={P.figOrder} onChange={v => set('fields', 'figOrder', v)} options={FIG_ORDERS} w={180} />
-          <div style={{ display: 'flex', gap: 10 }}><Chk label="beam path" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} /><Chk label="stitches" checked={overlays.stitches} onChange={v => setOverlays(o => ({ ...o, stitches: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
+          <Chk label="Merge same-dose neighbours" checked={P.mergeFigs} onChange={v => set('fields', 'mergeFigs', v)} hint="PEC needs small pieces to vary the dose; the machine does not. Neighbours in the same dose class, field and pass are joined back into whole trapezoids." />
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><Chk label="figure jumps" checked={overlays.path} onChange={v => setOverlays(o => ({ ...o, path: v }))} /><Chk label="beam steps" checked={overlays.steps} onChange={v => setOverlays(o => ({ ...o, steps: v }))} hint="Zoom in: dots = beam positions at the beam step size inside each figure" /><Chk label="stitches" checked={overlays.stitches} onChange={v => setOverlays(o => ({ ...o, stitches: v }))} />{P.fieldsOn && <Chk label="field order" checked={overlays.order} onChange={v => setOverlays(o => ({ ...o, order: v }))} />}</div>
         </Sec>
         {res.fields && <Sec title="Result">
           {res.fields.fieldsOn && <><KV k="Placement" v={res.fields.placementUsed} /><KV k="Fields used" v={res.fields.nFields} />
-            <KV k="Stitches (pattern cut by a field edge)" v={res.fields.stitches} tone={C.beam} /><KV k="Stitched length" v={fmtLen(res.fields.cutLen)} /><KV k="Stage travel" v={fmtLen(res.fields.stageTravel)} /></>}
-          <KV k="Figures" v={fmtN(res.fields.n)} /><KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
-          {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>fields</th><th>travel</th></tr></thead>
-            <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.fields}</td><td>{fmtLen(c.travel)}</td></tr>)}</tbody></table>}
+            <KV k="Stitches (pattern cut by a field edge)" v={res.fields.stitches} tone={C.beam} /><KV k="…through critical spots" v={res.fields.critCut} tone={res.fields.critCut ? C.bad : C.ok} /><KV k="Stitch risk (waveguide-stitch equivalents)" v={res.fields.stitchCost.toFixed(2)} /><KV k="Stitched length" v={fmtLen(res.fields.cutLen)} /><KV k="Stage travel" v={fmtLen(res.fields.stageTravel)} /></>}
+          <KV k="Figures" v={`${fmtN(res.fields.n)}${res.fields.nBefore > res.fields.n ? ` (merged from ${fmtN(res.fields.nBefore)})` : ''}`} />{res.fields.passes && <KV k="Pass 1 fine / pass 2 bulk" v={`${fmtN(res.fields.nFine)} / ${fmtN(res.fields.n - res.fields.nFine)} figures`} />}<KV k="Beam travel (figure to figure)" v={fmtLen(res.fields.travel)} />
+          {res.fields.candidates && <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse', margin: '6px 0' }}><thead><tr style={{ color: C.mute, textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 600 }}>strategy</th><th>stitches</th><th>critical</th><th>risk</th><th>fields</th></tr></thead>
+            <tbody>{res.fields.candidates.map(c => <tr key={c.name} style={{ textAlign: 'right', background: c.chosen ? '#ecfdf5' : 'transparent', fontWeight: c.chosen ? 700 : 400 }}><td style={{ textAlign: 'left', padding: '2px 0' }}>{c.chosen ? '✓ ' : ''}{c.name}</td><td>{c.stitches}</td><td>{c.crit}</td><td>{c.cost.toFixed(2)}</td><td>{c.fields}</td></tr>)}</tbody></table>}
           <Btn small onClick={() => setView('order')}>▶ Show writing order</Btn>
         </Sec>}
         <Note>The viewer's <b>Write order</b> tab colours figures from first (blue) to last (red) and can play the exposure. Export writes the GDS in this order. PEC runs on the whole pattern before field splitting, so backscatter from neighbouring fields is included. Some tools re-sort figures themselves.</Note>
@@ -760,13 +879,19 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         {P.expMode === 'layer' ? <Num label="First class layer" value={P.layerBase} onChange={v => up('layerBase', v)} /> : <><Chk label="Keep source layer numbers" checked={P.layerKeep} onChange={v => up('layerKeep', v)} />{!P.layerKeep && <Num label="Output layer" value={P.layerOut} onChange={v => up('layerOut', v)} />}</>}
         {P.fieldsOn && <Chk label="One cell per write field" checked={P.cellPerField} onChange={v => up('cellPerField', v)} />}
         <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, margin: '5px 0' }}><span style={{ color: C.mute }}>File name</span><input value={P.fileName} onChange={e => up('fileName', e.target.value.replace(/[^\w.-]/g, '_'))} style={{ ...inp, width: 150 }} /></label>
+        <Sec title="Passes">
+          <Sel label="Passes" value={P.passMode} onChange={v => set('fields', 'passMode', v)} w={190} options={[['plan', `As the write plan says${chosen ? ` (${chosen.passes === 'split' ? 'two' : 'one'})` : ''}`], ['single', 'One pass, fine beam'], ['split', 'Fine pass + bulk pass']]} />
+          {usePasses && <Num label="Bulk pass layer = layer +" value={P.bulkOffset} onChange={v => up('bulkOffset', v)} hint="The fine pass keeps the source layer; the bulk pass goes to layer + this offset, so the tool can give it its own current" />}
+        </Sec>
         <Sec title="Dose & write time">
           <Num label="Base dose" unit="µC/cm²" value={P.baseDose} onChange={v => up('baseDose', v)} hint="Dose for factor 1.0 (≈ 2 × dose-to-clear with edge equalization)" />
-          <Num label="Beam current" unit="nA" value={P.current} onChange={v => up('current', v)} />
-          <Num label="Beam step size" unit="nm" value={P.bss} onChange={v => up('bss', v)} />
+          <Num label={usePasses ? 'Fine beam current' : 'Beam current'} unit="nA" value={P.current} onChange={v => up('current', v)} />
+          <Num label={usePasses ? 'Fine beam step' : 'Beam step size'} unit="nm" value={P.bss} onChange={v => up('bss', v)} />
+          {usePasses && <><Num label="Bulk beam current" unit="nA" value={P.iBulk} onChange={v => up('iBulk', v)} /><Num label="Bulk beam step" unit="nm" value={P.bssBulk} onChange={v => up('bssBulk', v)} /><Num label="Current change" unit="min" value={P.tSwitch} onChange={v => up('tSwitch', v)} hint="Aperture/current change, focus and calibration between the passes" /></>}
           <Num label="Min. dwell" unit="ns" value={P.minDwell} onChange={v => up('minDwell', v)} hint="1/max clock: 20 ns = 50 MHz" />
+          {writeEst && writeEst.passes && <><KV k="Pass 1 · fine" v={`${(writeEst.f.A * 1e8).toFixed(1)} µm² · ${fmtTime(writeEst.f.t)}`} /><KV k="Pass 2 · bulk" v={`${(writeEst.b.A * 1e8).toFixed(1)} µm² · ${fmtTime(writeEst.b.t)}`} /><KV k="Total incl. current change" v={fmtTime(writeEst.total)} tone={C.ok} /><KV k="One pass at the fine current" v={fmtTime(writeEst.single)} /></>}
           {writeEst ? <><KV k="Exposed area" v={`${(writeEst.A * 1e8).toFixed(1)} µm²`} /><KV k="Dwell per step" v={`${writeEst.tmin.toFixed(1)} – ${writeEst.tmax.toFixed(1)} ns`} tone={writeEst.tmin < P.minDwell ? C.bad : C.ok} />
-            <KV k="Beam-on time" v={fmtTime(writeEst.t)} />{writeEst.tmin < P.minDwell && <Note tone={C.bad}>Shortest dwell is below the machine limit: lower the current or enlarge the step (minimum step ≈ {Math.sqrt(P.current / (pecR.classDose[1] * P.baseDose * 0.01) * P.minDwell).toFixed(1)} nm).</Note>}</> : <Note>Run PEC to see dwell times.</Note>}
+            {!writeEst.passes && <KV k="Beam-on time" v={fmtTime(writeEst.t)} />}{writeEst.tmin < P.minDwell && <Note tone={C.bad}>Shortest dwell is below the machine limit: lower the current or enlarge the step (minimum step ≈ {Math.sqrt(P.current / (pecR.classDose[1] * P.baseDose * 0.01) * P.minDwell).toFixed(1)} nm).</Note>}</> : <Note>Run PEC to see dwell times.</Note>}
         </Sec>
         <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}><Btn primary onClick={doExport} disabled={!meta || !!running}>⬇ Export GDS + dose table</Btn></div>
         <Note>Dose classes go in the GDS datatype (or layer). Import the GDS in your tool and map datatype → dose with the table. The Raith option writes datatype = round(1000 × dose factor), the convention of the open-source Raith_GDSII toolbox; check it against your tool once with a dose test.</Note>
@@ -776,11 +901,11 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
   };
 
   useEffect(() => { // fall back to the newest stage that still has data
-    const has = { layout: !!res.import, fractured: !!res.fracture, dose: !!res.pec, fields: !!res.fields, order: !!res.fields, sim: !!res.sim };
-    if (!has[view]) { const f = ['order', 'dose', 'fractured', 'layout'].find(v => has[v]); if (f) setView(f); }
+    const has = { layout: !!res.import, fractured: !!res.fracture, analysis: !!res.analyze, dose: !!res.pec, fields: !!res.fields, order: !!res.fields, sim: !!res.sim };
+    if (!has[view]) { const f = ['order', 'dose', 'analysis', 'fractured', 'layout'].find(v => has[v]); if (f) setView(f); }
   }, [res, view]);
   const mod = MODULES.find(m => m.id === sel);
-  const viewTabs = [['layout', 'Layout', !!res.import], ['fractured', 'Fractured', !!res.fracture], ['dose', 'Dose', !!res.pec], ['fields', 'Fields', !!res.fields], ['order', 'Write order', !!res.fields], ['sim', 'Simulation', !!res.sim]];
+  const viewTabs = [['layout', 'Layout', !!res.import], ['fractured', 'Fractured', !!res.fracture], ['analysis', 'Analysis', !!res.analyze], ['dose', 'Dose', !!res.pec], ['fields', 'Fields', !!res.fields], ['order', 'Write order', !!res.fields], ['sim', 'Simulation', !!res.sim]];
   return <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: C.bg, color: C.ink, fontFamily: 'system-ui,-apple-system,"Segoe UI",sans-serif', fontSize: 12.5 }}>
     {/* top bar */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#fff', borderBottom: `1px solid ${C.line}`, flexWrap: 'wrap' }}>
@@ -812,7 +937,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><b style={{ fontSize: 12.5 }}>{m.name}</b><span title={lab} style={{ width: 8, height: 8, borderRadius: 4, background: col, display: 'inline-block', animation: st === 'running' ? 'sebpulse 1s infinite' : 'none' }} /></div>
               <div style={{ fontSize: 10.5, color: C.mute, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary(m.id)}</div>
             </div>
-            {['import', 'extract', 'bias', 'fracture', 'pec', 'fields'].includes(m.id) && <button title="Run to here" disabled={!meta || !!running} onClick={e => { e.stopPropagation(); runTo(m.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', color: C.accent, fontSize: 12, padding: 0 }}>▶</button>}
+            {['import', 'extract', 'bias', 'fracture', 'analyze', 'pec', 'fields'].includes(m.id) && <button title="Run to here" disabled={!meta || !!running} onClick={e => { e.stopPropagation(); runTo(m.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', color: C.accent, fontSize: 12, padding: 0 }}>▶</button>}
           </div></div>; })}
         <div style={{ marginTop: 14, fontSize: 10.5, color: C.mute, lineHeight: 1.5 }}>{Object.entries(STATUS).filter(([k]) => k !== 'error').map(([k, [c, l]]) => <span key={k} style={{ marginRight: 8, whiteSpace: 'nowrap' }}><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 4, background: c, marginRight: 3 }} />{l}</span>)}</div>
       </div>
@@ -823,7 +948,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
           <div style={{ flex: 1 }} />
           <Btn small onClick={() => { setFitTo(null); setFitKey(k => k + 1); }}>⌖ Fit</Btn>
         </div>
-        {meta ? <Viewer layers={{ rings: res.import, traps: res.fracture && res.fracture.traps, pec: res.pec, fields: res.fields, sim: res.sim }} view={view} overlays={overlays} bbox={res.import && res.import.bbox} fitKey={fitKey} fitTo={fitTo} simBox={simBox} setSimBox={setSimBox} onView={setViewWin} cutY={view === 'sim' && profile ? profile.y : null} />
+        {meta ? <Viewer layers={{ rings: res.import, traps: res.fracture && res.fracture.traps, pec: res.pec, fields: res.fields, sim: res.sim, analyze: res.analyze }} beam={{ bss: +P.bss, bssBulk: +P.bssBulk }} view={view} overlays={overlays} bbox={res.import && res.import.bbox} fitKey={fitKey} fitTo={fitTo} simBox={simBox} setSimBox={setSimBox} onView={setViewWin} cutY={view === 'sim' && profile ? profile.y : null} />
           : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: C.mute }}>
             <div style={{ fontSize: 40 }}>⚡</div><div style={{ fontSize: 15, color: C.ink, fontWeight: 600 }}>Soft-EBeam</div>
             <div style={{ maxWidth: 440, textAlign: 'center', lineHeight: 1.5 }}>Proximity effect correction, fracturing and write-field preparation for electron-beam lithography — running entirely in your browser. Nothing is uploaded.</div>
@@ -836,7 +961,7 @@ export default function SoftEBeam({ initialLib, initialName, onBack, parsers }) 
         <div style={{ fontSize: 11.5, color: C.mute, lineHeight: 1.45, margin: '4px 0 8px' }}>{mod.what}</div>
         {err[stageOf(sel)] && <Note tone={C.bad}>{err[stageOf(sel)]}</Note>}
         {panel()}
-        {['import', 'extract', 'bias', 'fracture', 'pec', 'fields'].includes(sel) && <div style={{ marginTop: 10 }}><Btn primary onClick={() => runTo(sel)} disabled={!meta || !!running}>▶ Run to {mod.name}</Btn></div>}
+        {['import', 'extract', 'bias', 'fracture', 'analyze', 'pec', 'fields'].includes(sel) && <div style={{ marginTop: 10 }}><Btn primary onClick={() => runTo(sel)} disabled={!meta || !!running}>▶ Run to {mod.name}</Btn></div>}
       </div>
     </div>
     <style>{'@keyframes sebpulse{0%,100%{opacity:1}50%{opacity:.3}}'}</style>

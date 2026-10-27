@@ -1,0 +1,42 @@
+[
+ {
+  "name": "big pad interior",
+  "win": [
+   14000,
+   54000,
+   16000,
+   56000
+  ],
+  "kind": "interior"
+ },
+ {
+  "name": "pad seam band (right edge)",
+  "win": [
+   28400,
+   54000,
+   29940,
+   56000
+  ],
+  "kind": "interior"
+ },
+ {
+  "name": "pad seam band (bottom edge)",
+  "win": [
+   14000,
+   40060,
+   16000,
+   41600
+  ],
+  "kind": "interior"
+ },
+ {
+  "name": "gap-pad seam band",
+  "win": [
+   78400,
+   49000,
+   79940,
+   51000
+  ],
+  "kind": "interior"
+ }
+]

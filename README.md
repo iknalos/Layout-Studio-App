@@ -45,6 +45,7 @@ Layout Studio runs entirely in the browser. It parses, renders, and exports GDS-
 
 ### ⚡ Soft-EBeam — e-beam lithography data prep
 - Flow-based proximity effect correction (PEC), fracturing and write-field preparation, opened from the landing page, the editor's **⚡ E-Beam** button, or `/?ebeam=1`
+- **Analyze & plan**: finds repeated devices, critical spots (narrow features, tight gaps) and what needs the fine beam, then scores every field size × placement × pass combination and recommends three ways to write (fine + bulk passes with a shared seam, whole devices per field, no cuts through critical spots)
 - PSF from literature presets, α/β/η, an in-browser Monte Carlo simulation of your resist/substrate stack, or an imported `.lpsf`/text PSF
 - Exposure simulation with the developed edge, dose classes, GDSII export with dose in datatype/layer (incl. Raith convention), dose table, dwell and write-time estimate
 - Runs entirely in the browser. Details, maths and validation: [docs/soft-ebeam](docs/soft-ebeam/README.md)
